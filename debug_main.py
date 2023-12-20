@@ -21,6 +21,7 @@ import pickle
 
 # Custom Libraries
 import utils
+from load_dataset import load_data
 
 # Tensorboard initialization
 writer = SummaryWriter()
@@ -31,6 +32,7 @@ sns.set_style('darkgrid')
 # Main
 def main(args, ITE=0):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    args.device = device
     reinit = True if args.prune_type=="reinit" else False
 
     # Data Loader
@@ -56,6 +58,9 @@ def main(args, ITE=0):
         from archs.cifar100 import AlexNet, fc1, LeNet5, vgg, resnet  
     
     # If you want to add extra datasets paste here
+    elif args.dataset == "CFD":
+        traindataset, testdataset = load_data(args)
+        from archs.CFD import fc1
 
     else:
         print("\nWrong Dataset choice \n")
@@ -97,7 +102,8 @@ def main(args, ITE=0):
 
     # Optimizer and Loss
     optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-4)
-    criterion = nn.CrossEntropyLoss() # Default was F.nll_loss
+    # criterion = nn.CrossEntropyLoss() # Default was F.nll_loss
+    criterion = r2_loss
 
     # Layer Looper
     for name, param in model.named_parameters():
@@ -105,14 +111,14 @@ def main(args, ITE=0):
 
     # Pruning
     # NOTE First Pruning Iteration is of No Compression
-    bestacc = 0.0
-    best_accuracy = 0
+    bestr2 = 100
+    best_relative_error = 100
     ITERATION = args.prune_iterations
     comp = np.zeros(ITERATION,float)
-    bestacc = np.zeros(ITERATION,float)
+    bestre = np.zeros(ITERATION,float)
     step = 0
     all_loss = np.zeros(args.end_iter,float)
-    all_accuracy = np.zeros(args.end_iter,float)
+    all_relative_error = np.zeros(args.end_iter,float)
 
 
     for _ite in range(args.start_iter, ITERATION):
@@ -156,45 +162,47 @@ def main(args, ITE=0):
 
             # Frequency for Testing
             if iter_ % args.valid_freq == 0:
-                accuracy = test(model, test_loader, criterion)
+                test_loss, relative_error = test(model, test_loader, criterion)
 
                 # Save Weights
-                if accuracy > best_accuracy:
-                    best_accuracy = accuracy
+                if relative_error < best_relative_error:
+                    best_relative_error = relative_error
                     utils.checkdir(f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/")
                     torch.save(model,f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/{_ite}_model_{args.prune_type}.pth.tar")
+                if test_loss < bestr2:
+                    bestr2 = test_loss
 
             # Training
             loss = train(model, train_loader, optimizer, criterion)
             all_loss[iter_] = loss
-            all_accuracy[iter_] = accuracy
+            all_relative_error[iter_] = relative_error
             
-            # Frequency for Printing Accuracy and Loss
+            # Frequency for Printing relative_error and Loss
             if iter_ % args.print_freq == 0:
                 pbar.set_description(
-                    f'Train Epoch: {iter_}/{args.end_iter} Loss: {loss:.6f} Accuracy: {accuracy:.2f}% Best Accuracy: {best_accuracy:.2f}%')       
+                    f'Train Epoch: {iter_}/{args.end_iter} Loss: {loss:.6f} R2: {bestr2:.6f} relative_error: {relative_error:.2f}% Best relative error: {best_relative_error:.2f}%')
 
-        writer.add_scalar('Accuracy/test', best_accuracy, comp1)
-        bestacc[_ite]=best_accuracy
+        writer.add_scalar('relative_error/test', best_relative_error, comp1)
+        bestre[_ite]=best_relative_error
 
-        # Plotting Loss (Training), Accuracy (Testing), Iteration Curve
-        #NOTE Loss is computed for every iteration while Accuracy is computed only for every {args.valid_freq} iterations. Therefore Accuracy saved is constant during the uncomputed iterations.
-        #NOTE Normalized the accuracy to [0,100] for ease of plotting.
+        # Plotting Loss (Training), relative_error (Testing), Iteration Curve
+        #NOTE Loss is computed for every iteration while relative_error is computed only for every {args.valid_freq} iterations. Therefore relative_error saved is constant during the uncomputed iterations.
+        #NOTE Normalized the relative_error to [0,100] for ease of plotting.
         plt.plot(np.arange(1,(args.end_iter)+1), 100*(all_loss - np.min(all_loss))/np.ptp(all_loss).astype(float), c="blue", label="Loss") 
-        plt.plot(np.arange(1,(args.end_iter)+1), all_accuracy, c="red", label="Accuracy") 
-        plt.title(f"Loss Vs Accuracy Vs Iterations ({args.dataset},{args.arch_type})") 
+        plt.plot(np.arange(1,(args.end_iter)+1), all_relative_error, c="red", label="relative_error")
+        plt.title(f"Loss Vs relative_error Vs Iterations ({args.dataset},{args.arch_type})")
         plt.xlabel("Iterations") 
-        plt.ylabel("Loss and Accuracy") 
+        plt.ylabel("Loss and relative_error")
         plt.legend() 
         plt.grid(color="gray") 
         utils.checkdir(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/")
-        plt.savefig(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_LossVsAccuracy_{comp1}.png", dpi=1200) 
+        plt.savefig(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_LossVsRelative_error_{comp1}.png", dpi=1200)
         plt.close()
 
         # Dump Plot values
         utils.checkdir(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/")
         all_loss.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_all_loss_{comp1}.dat")
-        all_accuracy.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_all_accuracy_{comp1}.dat")
+        all_relative_error.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_all_relative_error_{comp1}.dat")
         
         # Dumping mask
         utils.checkdir(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/")
@@ -202,27 +210,28 @@ def main(args, ITE=0):
             pickle.dump(mask, fp)
         
         # Making variables into 0
-        best_accuracy = 0
+        best_relative_error = 0
+        bestr2 = 0
         all_loss = np.zeros(args.end_iter,float)
-        all_accuracy = np.zeros(args.end_iter,float)
+        all_relative_error = np.zeros(args.end_iter,float)
 
     # Dumping Values for Plotting
     utils.checkdir(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/")
     comp.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_compression.dat")
-    bestacc.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_bestaccuracy.dat")
+    bestre.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_bestrelativeerror.dat")
 
     # Plotting
     a = np.arange(args.prune_iterations)
-    plt.plot(a, bestacc, c="blue", label="Winning tickets") 
-    plt.title(f"Test Accuracy vs Unpruned Weights Percentage ({args.dataset},{args.arch_type})") 
+    plt.plot(a, bestre, c="blue", label="Winning tickets")
+    plt.title(f"Test relative error vs Unpruned Weights Percentage ({args.dataset},{args.arch_type})")
     plt.xlabel("Unpruned Weights Percentage") 
-    plt.ylabel("test accuracy") 
+    plt.ylabel("test relative error")
     plt.xticks(a, comp, rotation ="vertical") 
     plt.ylim(0,100)
     plt.legend() 
     plt.grid(color="gray") 
     utils.checkdir(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/")
-    plt.savefig(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_AccuracyVsWeights.png", dpi=1200) 
+    plt.savefig(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_reeVsWeights.png", dpi=1200)
     plt.close()                    
    
 # Function for Training
@@ -253,17 +262,14 @@ def test(model, test_loader, criterion):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
     test_loss = 0
-    correct = 0
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
             output = model(data)
-            test_loss += F.nll_loss(output, target, reduction='sum').item()  # sum up batch loss
-            pred = output.data.max(1, keepdim=True)[1]  # get the index of the max log-probability
-            correct += pred.eq(target.data.view_as(pred)).sum().item()
+            test_loss += criterion(output, target).item()
         test_loss /= len(test_loader.dataset)
-        accuracy = 100. * correct / len(test_loader.dataset)
-    return accuracy
+        relative_error = 100. * torch.mean(torch.abs(output - target) / torch.abs(target+1e-8))
+    return test_loss, relative_error
 
 # Prune by Percentile module
 def prune_by_percentile(percent, resample=False, reinit=False,**kwargs):
@@ -390,6 +396,10 @@ def weight_init(m):
                 init.normal_(param.data)
 
 
+def r2_loss(output, target):
+    return torch.sum(torch.square(target - output)) / torch.sum(torch.square(target - torch.mean(target)))
+
+
 if __name__=="__main__":
     
     #from gooey import Gooey
@@ -398,18 +408,19 @@ if __name__=="__main__":
     # Arguement Parser
     parser = argparse.ArgumentParser()
     parser.add_argument("--lr",default= 1.2e-3, type=float, help="Learning rate")
-    parser.add_argument("--batch_size", default=60, type=int)
+    parser.add_argument("--batch_size", default=3000, type=int)
     parser.add_argument("--start_iter", default=0, type=int)
-    parser.add_argument("--end_iter", default=100, type=int)
+    parser.add_argument("--end_iter", default=100, type=int)  # 100
     parser.add_argument("--print_freq", default=1, type=int)
     parser.add_argument("--valid_freq", default=1, type=int)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--prune_type", default="lt", type=str, help="lt | reinit")
-    parser.add_argument("--gpu", default="3", type=str)
-    parser.add_argument("--dataset", default="mnist", type=str, help="mnist | cifar10 | fashionmnist | cifar100")
+    parser.add_argument("--gpu", default="1", type=str)
+    parser.add_argument("--dataset", default="CFD", type=str, help="mnist | cifar10 | fashionmnist | cifar100 | CFD | fluidanimation | puremd | cosmoflow")
     parser.add_argument("--arch_type", default="fc1", type=str, help="fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121")
     parser.add_argument("--prune_percent", default=10, type=int, help="Pruning percent")
     parser.add_argument("--prune_iterations", default=35, type=int, help="Pruning iterations count")
+    parser.add_argument("--device", default="cuda", type=str, help="cuda | cpu")
 
     
     args = parser.parse_args()
