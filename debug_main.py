@@ -38,7 +38,7 @@ sns.set_style('darkgrid')
 # Main
 def main(args, ITE=0):
     for i in range(args.prune_iterations):
-        writer['_ite'] = SummaryWriter(f'runs/{now_time}/')
+        writer[i] = SummaryWriter(f'runs/{now_time}/')
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
@@ -174,8 +174,8 @@ def main(args, ITE=0):
                 test_loss, relative_error = test(model, test_loader, criterion)
                 # writer['test_loss'].add_scalar(f'/Loss/{_ite}/test_loss', test_loss, iter_)
                 # writer['relative_error'].add_scalar(f'/Loss/{_ite}/relative_error', relative_error, iter_)
-                writer[f'{_ite}'].add_scalar('test_loss', test_loss, iter_)
-                writer[f'{_ite}'].add_scalar('relative_error', relative_error, iter_)
+                writer[_ite].add_scalar('test_loss', test_loss, iter_)
+                writer[_ite].add_scalar('relative_error', relative_error, iter_)
 
                 # Save Weights
                 if relative_error < best_relative_error:
@@ -190,7 +190,7 @@ def main(args, ITE=0):
             all_loss[iter_] = loss
             all_relative_error[iter_] = relative_error
             # writer['train_loss'].add_scalar(f'/Loss/{_ite}/train', loss, iter_)
-            writer[f'{_ite}'].add_scalar('train_loss', loss, iter_)
+            writer[_ite].add_scalar('train_loss', loss, iter_)
             
             # Frequency for Printing relative_error and Loss
             if iter_ % args.print_freq == 0:
@@ -424,7 +424,7 @@ if __name__=="__main__":
     parser.add_argument("--lr",default= 1.2e-3, type=float, help="Learning rate")
     parser.add_argument("--batch_size", default=3000, type=int)
     parser.add_argument("--start_iter", default=0, type=int)
-    parser.add_argument("--end_iter", default=5, type=int)  # 100
+    parser.add_argument("--end_iter", default=50, type=int)  # 100
     parser.add_argument("--print_freq", default=1, type=int)
     parser.add_argument("--valid_freq", default=1, type=int)
     parser.add_argument("--resume", action="store_true")
