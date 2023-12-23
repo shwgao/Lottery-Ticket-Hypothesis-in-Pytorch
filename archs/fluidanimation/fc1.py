@@ -6,7 +6,7 @@ class fc1(nn.Module):
     def __init__(self, num_classes=5):
         super(fc1, self).__init__()
         self.classifier = nn.Sequential(
-            nn.Linear(20, 784),
+            nn.Linear(15, 784),
             nn.ReLU(inplace=True),
             nn.Linear(784, 300),
             nn.ReLU(inplace=True),
