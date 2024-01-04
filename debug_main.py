@@ -1,27 +1,35 @@
+"""
+This file is used to train the tensorflow model like dimenet_pp.
+"""
 # Importing Libraries
 import argparse
 import copy
 import datetime
 import os
 import sys
+import tensorflow as tf
 import numpy as np
+import yaml
 from tqdm import tqdm
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torchvision
+
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import matplotlib.pyplot as plt
 import os
 from tensorboardX import SummaryWriter
-import torchvision.utils as vutils
 import seaborn as sns
 import torch.nn.init as init
 import pickle
 
 # Custom Libraries
 import utils
+from archs.puremd.dimenet_pp import get_trainer, extract_dense_layers
+from archs.puremd.layers.embedding_block import EmbeddingBlock
+from archs.puremd.layers.interaction_pp_block import InteractionPPBlock
+from archs.puremd.layers.output_pp_block import OutputPPBlock
+from archs.puremd.training.trainer import Trainer
 from load_dataset import load_data
 
 now_time = datetime.datetime.now().strftime("%m-%d-%H")
@@ -30,16 +38,17 @@ now_time = datetime.datetime.now().strftime("%m-%d-%H")
 # writer = {'train_loss': SummaryWriter(f'runs/{now_time}/train_loss'),
 #           'test_loss': SummaryWriter(f'runs/{now_time}/test_loss'),
 #           'relative_error': SummaryWriter(f'runs/{now_time}/relative_error')}
-writer = {}
 
 # Plotting Style
 sns.set_style('darkgrid')
 
+with open('./archs/puremd/config_pp.yaml', 'r') as c:
+    config = yaml.safe_load(c)
+
 
 # Main
 def main(args, ITE=0):
-    for i in range(args.prune_iterations):
-        writer[i] = SummaryWriter(f'runs/{now_time}/')
+    writer = SummaryWriter(f'runs/{args.dataset}/{now_time}/')
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
@@ -51,41 +60,22 @@ def main(args, ITE=0):
         traindataset = datasets.MNIST('../data', train=True, download=True, transform=transform)
         testdataset = datasets.MNIST('../data', train=False, transform=transform)
         from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
-
-    elif args.dataset == "cifar10":
-        traindataset = datasets.CIFAR10('../data', train=True, download=True, transform=transform)
-        testdataset = datasets.CIFAR10('../data', train=False, transform=transform)
-        from archs.cifar10 import AlexNet, LeNet5, fc1, vgg, resnet, densenet
-
-    elif args.dataset == "fashionmnist":
-        traindataset = datasets.FashionMNIST('../data', train=True, download=True, transform=transform)
-        testdataset = datasets.FashionMNIST('../data', train=False, transform=transform)
-        from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
-
-    elif args.dataset == "cifar100":
-        traindataset = datasets.CIFAR100('../data', train=True, download=True, transform=transform)
-        testdataset = datasets.CIFAR100('../data', train=False, transform=transform)
-        from archs.cifar100 import AlexNet, fc1, LeNet5, vgg, resnet
-
         # If you want to add extra datasets paste here
-    elif args.dataset == "CFD":
-        traindataset, testdataset = load_data(args)
-        from archs.CFD import fc1
+    elif args.dataset == "puremd":
+        train_loader, validation = load_data(args)
+        from archs.puremd import dimenet_pp
 
     else:
         print("\nWrong Dataset choice \n")
         exit()
 
-    train_loader = torch.utils.data.DataLoader(traindataset, batch_size=args.batch_size, shuffle=True, num_workers=0,
-                                               drop_last=False)
-    # train_loader = cycle(train_loader)
-    test_loader = torch.utils.data.DataLoader(testdataset, batch_size=args.batch_size, shuffle=False, num_workers=0,
-                                              drop_last=True)
-
     # Importing Network Architecture
     global model, LeNet5
     if args.arch_type == "fc1":
-        model = fc1.fc1().to(device)
+        if args.dataset == "puremd":
+            model = dimenet_pp.DimeNetPP()
+        else:
+            model = fc1.fc1().to(device)
     elif args.arch_type == "lenet5":
         model = LeNet5.LeNet5().to(device)
     elif args.arch_type == "alexnet":
@@ -96,36 +86,29 @@ def main(args, ITE=0):
         model = resnet.resnet18().to(device)
     elif args.arch_type == "densenet121":
         model = densenet.densenet121().to(device)
-        # If you want to add extra model paste here
+
     else:
         print("\nWrong Model choice\n")
         exit()
 
     # Weight Initialization
-    model.apply(weight_init)
+    # model.apply(weight_init) #  model were initialized during the model definition
 
     # Copying and Saving Initial State
-    initial_state_dict = copy.deepcopy(model.state_dict())
+    # initial_state_dict = copy.deepcopy(model.state_dict())
+    initial_state_dict = [layer.get_weights() for layer in model.layers if len(layer.get_weights()) > 0]
     utils.checkdir(f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/")
-    torch.save(model,
-               f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/initial_state_dict_{args.prune_type}.pth.tar")
+    # model.save(f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/initial_state_dict_{args.prune_type}", save_format="tf")
 
     # Making Initial Mask
     make_mask(model)
 
-    # Optimizer and Loss
-    optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-4)
-    # criterion = nn.CrossEntropyLoss() # Default was F.nll_loss
-    criterion = r2_loss
-
-    # Layer Looper
-    for name, param in model.named_parameters():
-        print(name, param.size())
+    trainer = get_trainer(model)
 
     # Pruning
     # NOTE First Pruning Iteration is of No Compression
     bestr2 = 100
-    best_relative_error = 100
+    best_relative_error = 100000
     ITERATION = args.prune_iterations
     comp = np.zeros(ITERATION, float)
     bestre = np.zeros(ITERATION, float)
@@ -136,37 +119,11 @@ def main(args, ITE=0):
     for _ite in range(args.start_iter, ITERATION):
         if not _ite == 0:
             prune_by_percentile(args.prune_percent, resample=resample, reinit=reinit)
-            if reinit:
-                model.apply(weight_init)
-                # if args.arch_type == "fc1":
-                #    model = fc1.fc1().to(device)
-                # elif args.arch_type == "lenet5":
-                #    model = LeNet5.LeNet5().to(device)
-                # elif args.arch_type == "alexnet":
-                #    model = AlexNet.AlexNet().to(device)
-                # elif args.arch_type == "vgg16":
-                #    model = vgg.vgg16().to(device)  
-                # elif args.arch_type == "resnet18":
-                #    model = resnet.resnet18().to(device)   
-                # elif args.arch_type == "densenet121":
-                #    model = densenet.densenet121().to(device)   
-                # else:
-                #    print("\nWrong Model choice\n")
-                #    exit()
-                step = 0
-                for name, param in model.named_parameters():
-                    if 'weight' in name:
-                        weight_dev = param.device
-                        param.data = torch.from_numpy(param.data.cpu().numpy() * mask[step]).to(weight_dev)
-                        step = step + 1
-                step = 0
-            else:
-                original_initialization(mask, initial_state_dict)
-            optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+            original_initialization(mask, initial_state_dict)
         print(f"\n--- Pruning Level [{ITE}:{_ite}/{ITERATION}]: ---")
 
         # Print the table of Nonzeros in each layer
-        comp1 = utils.print_nonzeros(model)
+        comp1 = utils.print_nonzeros_tf(model)
         comp[_ite] = comp1
         pbar = tqdm(range(args.end_iter))
 
@@ -174,27 +131,27 @@ def main(args, ITE=0):
 
             # Frequency for Testing
             if iter_ % args.valid_freq == 0:
-                test_loss, relative_error = test(model, test_loader, criterion)
+                test_loss, relative_error = test(validation, trainer)
                 # writer['test_loss'].add_scalar(f'/Loss/{_ite}/test_loss', test_loss, iter_)
                 # writer['relative_error'].add_scalar(f'/Loss/{_ite}/relative_error', relative_error, iter_)
-                writer[_ite].add_scalar('test_loss', test_loss, iter_)
-                writer[_ite].add_scalar('relative_error', relative_error, iter_)
+                writer.add_scalars('test_loss', {f'{_ite}': test_loss}, iter_)
+                writer.add_scalars('relative_error', {f'{_ite}': relative_error}, iter_)
 
                 # Save Weights
                 if relative_error < best_relative_error:
                     best_relative_error = relative_error
                     utils.checkdir(f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/")
-                    torch.save(model,
-                               f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/{_ite}_model_{args.prune_type}.pth.tar")
+                    model.save(f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/{_ite}_model_{args.prune_type}",
+                               save_format="tf")
                 if test_loss < bestr2:
                     bestr2 = test_loss
 
             # Training
-            loss = train(model, train_loader, optimizer, criterion)
+            loss = train(train_loader, trainer)
             all_loss[iter_] = loss
             all_relative_error[iter_] = relative_error
             # writer['train_loss'].add_scalar(f'/Loss/{_ite}/train', loss, iter_)
-            writer[_ite].add_scalar('train_loss', loss, iter_)
+            writer.add_scalars('train_loss', {f'{_ite}': loss}, iter_)
 
             # Frequency for Printing relative_error and Loss
             if iter_ % args.print_freq == 0:
@@ -259,7 +216,7 @@ def main(args, ITE=0):
 
 
 # Function for Training
-def train(model, train_loader, optimizer, criterion):
+def train_torch(model, train_loader, optimizer, criterion):
     EPS = 1e-6
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.train()
@@ -282,11 +239,24 @@ def train(model, train_loader, optimizer, criterion):
     return train_loss.item()
 
 
+def train(train_provider, trainer):
+    losses = []
+    sample_numbers = []
+    relative_errors = []
+    for i in range(int(np.ceil(config['num_train'] / config['batch_size']))):
+        loss, nsamples = trainer.train_on_batch(train_provider['dataset_iter'], mask)
+        losses.append(loss)
+        sample_numbers.append(nsamples)
+    return np.average(losses, weights=sample_numbers)
+
+
 # Function for Testing
-def test(model, test_loader, criterion):
+def test_torch(model, test_loader, criterion):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
     test_loss = 0
+    output = None
+    target = None
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
@@ -297,8 +267,45 @@ def test(model, test_loader, criterion):
     return test_loss, relative_error
 
 
+def test(validation, trainer):
+    losses = []
+    sample_numbers = []
+    relative_errors = []
+    # Save backup variables and load averaged variables
+    trainer.save_variable_backups()
+    trainer.load_averaged_variables()
+
+    for i in range(int(np.ceil(config['num_valid'] / config['batch_size']))):
+        loss, nsamples, relative_error = trainer.test_on_batch(validation['dataset_iter'])
+        losses.append(loss)
+        sample_numbers.append(nsamples)
+        relative_errors.append(relative_error)
+
+    trainer.restore_variable_backups()
+    return np.average(losses, weights=sample_numbers), np.average(relative_errors)
+
+
+def test1(model, test_loader, criterion):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.eval()
+    test_loss = 0
+    output = None
+    target = None
+    with torch.no_grad():
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            test_loss += criterion(output, target).item()
+        test_loss /= len(test_loader.dataset)
+        if output is not None and target is not None:
+            relative_error = 100. * torch.mean(torch.abs(output - target) / torch.abs(target + 1e-8))
+        else:
+            relative_error = torch.tensor(0)  # or any other default value
+    return test_loss, relative_error
+
+
 # Prune by Percentile module
-def prune_by_percentile(percent, resample=False, reinit=False, **kwargs):
+def prune_by_percentile_torch(percent, resample=False, reinit=False, **kwargs):
     global step
     global mask
     global model
@@ -324,8 +331,29 @@ def prune_by_percentile(percent, resample=False, reinit=False, **kwargs):
     step = 0
 
 
+def prune_by_percentile(percent, model, mask):
+    global step
+    step = 0
+    for layer in model.layers:
+        if isinstance(layer, tf.keras.layers.Dense) or \
+                isinstance(layer, tf.keras.layers.Conv2D) or \
+                isinstance(layer, tf.keras.layers.Conv1D):
+            weights = layer.get_weights()[0]
+            alive = weights[np.nonzero(weights)]  # flattened array of nonzero values
+            percentile_value = np.percentile(abs(alive), percent)
+
+            # Create new mask
+            new_mask = np.where(abs(weights) < percentile_value, 0, mask[step])
+
+            # Apply new mask to the weights
+            layer.set_weights([weights * new_mask, layer.get_weights()[1]])
+            mask[step] = new_mask
+            step += 1
+    step = 0
+
+
 # Function to make an empty mask of the same size as the model
-def make_mask(model):
+def make_mask_torch(model):
     global step
     global mask
     step = 0
@@ -342,7 +370,36 @@ def make_mask(model):
     step = 0
 
 
-def original_initialization(mask_temp, initial_state_dict):
+def make_mask(model):
+    global mask
+    mask = []
+
+    dense_layers = []
+    for layer in model.layers:
+        if isinstance(layer, EmbeddingBlock) or \
+                isinstance(layer, InteractionPPBlock) or \
+                isinstance(layer, OutputPPBlock):
+            extract_dense_layers(layer, dense_layers)
+
+    # 输出Dense层信息
+    for layer in dense_layers:
+        print("层名称:", layer.name)
+        print("输出维度:", layer.units)
+        print("激活函数:", layer.activation.__name__)
+        print("-----")
+
+    # for blocks in model.layers:
+    #     if isinstance(blocks, EmbeddingBlock) or \
+    #             isinstance(blocks, InteractionPPBlock) or \
+    #             isinstance(blocks, OutputPPBlock):
+    #         for layer in blocks.layers:
+    #             if isinstance(layer, tf.keras.layers.Dense):
+    #                 weight_shape = layer.weights[0].shape
+    #                 mask.append(np.ones(weight_shape))
+    return mask
+
+
+def original_initialization_torch(mask_temp, initial_state_dict):
     global model
 
     step = 0
@@ -355,73 +412,12 @@ def original_initialization(mask_temp, initial_state_dict):
             param.data = initial_state_dict[name]
 
 
-# Function for Initialization
-def weight_init(m):
-    '''
-    Usage:
-        model = Model()
-        model.apply(weight_init)
-    '''
-    if isinstance(m, nn.Conv1d):
-        init.normal_(m.weight.data)
-        if m.bias is not None:
-            init.normal_(m.bias.data)
-    elif isinstance(m, nn.Conv2d):
-        init.xavier_normal_(m.weight.data)
-        if m.bias is not None:
-            init.normal_(m.bias.data)
-    elif isinstance(m, nn.Conv3d):
-        init.xavier_normal_(m.weight.data)
-        if m.bias is not None:
-            init.normal_(m.bias.data)
-    elif isinstance(m, nn.ConvTranspose1d):
-        init.normal_(m.weight.data)
-        if m.bias is not None:
-            init.normal_(m.bias.data)
-    elif isinstance(m, nn.ConvTranspose2d):
-        init.xavier_normal_(m.weight.data)
-        if m.bias is not None:
-            init.normal_(m.bias.data)
-    elif isinstance(m, nn.ConvTranspose3d):
-        init.xavier_normal_(m.weight.data)
-        if m.bias is not None:
-            init.normal_(m.bias.data)
-    elif isinstance(m, nn.BatchNorm1d):
-        init.normal_(m.weight.data, mean=1, std=0.02)
-        init.constant_(m.bias.data, 0)
-    elif isinstance(m, nn.BatchNorm2d):
-        init.normal_(m.weight.data, mean=1, std=0.02)
-        init.constant_(m.bias.data, 0)
-    elif isinstance(m, nn.BatchNorm3d):
-        init.normal_(m.weight.data, mean=1, std=0.02)
-        init.constant_(m.bias.data, 0)
-    elif isinstance(m, nn.Linear):
-        init.xavier_normal_(m.weight.data)
-        init.normal_(m.bias.data)
-    elif isinstance(m, nn.LSTM):
-        for param in m.parameters():
-            if len(param.shape) >= 2:
-                init.orthogonal_(param.data)
-            else:
-                init.normal_(param.data)
-    elif isinstance(m, nn.LSTMCell):
-        for param in m.parameters():
-            if len(param.shape) >= 2:
-                init.orthogonal_(param.data)
-            else:
-                init.normal_(param.data)
-    elif isinstance(m, nn.GRU):
-        for param in m.parameters():
-            if len(param.shape) >= 2:
-                init.orthogonal_(param.data)
-            else:
-                init.normal_(param.data)
-    elif isinstance(m, nn.GRUCell):
-        for param in m.parameters():
-            if len(param.shape) >= 2:
-                init.orthogonal_(param.data)
-            else:
-                init.normal_(param.data)
+def original_initialization(mask, initial_weights):
+    for i, layer in enumerate(model.layers):
+        if isinstance(layer, tf.keras.layers.Dense) or \
+                isinstance(layer, tf.keras.layers.Conv2D) or \
+                isinstance(layer, tf.keras.layers.Conv1D):
+            layer.set_weights([mask[i] * initial_weights[i], layer.get_weights()[1]])
 
 
 def r2_loss(output, target):
@@ -443,21 +439,23 @@ if __name__ == "__main__":
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--prune_type", default="lt", type=str, help="lt | reinit")
     parser.add_argument("--gpu", default="2", type=str)
-    parser.add_argument("--dataset", default="CFD", type=str,
+    parser.add_argument("--dataset", default="puremd", type=str,
                         help="mnist | cifar10 | fashionmnist | cifar100 | CFD | fluidanimation | puremd | cosmoflow")
     parser.add_argument("--arch_type", default="fc1", type=str,
                         help="fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121")
-    parser.add_argument("--prune_percent", default=10, type=int, help="Pruning percent")
-    parser.add_argument("--prune_iterations", default=35, type=int, help="Pruning iterations count")
+    parser.add_argument("--prune_percent", default=20, type=int, help="Pruning percent")
+    parser.add_argument("--prune_iterations", default=10, type=int, help="Pruning iterations count")
     parser.add_argument("--device", default="cuda", type=str, help="cuda | cpu")
 
     args = parser.parse_args()
 
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+    os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1, 2, 3'
 
     # FIXME resample
     resample = False
+    if args.dataset == 'cosmoflow':
+        args.batch_size = 64
 
     # Looping Entire process
     # for i in range(0, 5):

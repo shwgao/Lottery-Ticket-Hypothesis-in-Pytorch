@@ -30,7 +30,6 @@ now_time = datetime.datetime.now().strftime("%m-%d-%H")
 # writer = {'train_loss': SummaryWriter(f'runs/{now_time}/train_loss'),
 #           'test_loss': SummaryWriter(f'runs/{now_time}/test_loss'),
 #           'relative_error': SummaryWriter(f'runs/{now_time}/relative_error')}
-writer = {}
 
 # Plotting Style
 sns.set_style('darkgrid')
@@ -38,8 +37,7 @@ sns.set_style('darkgrid')
 
 # Main
 def main(args, ITE=0):
-    for i in range(args.prune_iterations):
-        writer[i] = SummaryWriter(f'runs/{now_time}/')
+    writer = SummaryWriter(f'runs/{args.dataset}/{now_time}/')
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
@@ -76,6 +74,18 @@ def main(args, ITE=0):
         traindataset, testdataset = load_data(args)
         from archs.fluidanimation import fc1
 
+    elif args.dataset == "puremd":
+        traindataset, testdataset = load_data(args)
+        from archs.puremd import fc1
+
+    elif args.dataset == "cosmoflow":
+        traindataset, testdataset = load_data(args)
+        from archs.cosmoflow import fc1
+
+    elif args.dataset == "dimenet":
+        train, validation = load_data(args)
+        from archs.puremd import dimenet_pp
+
     else:
         print("\nWrong Dataset choice \n")
         exit()
@@ -100,7 +110,8 @@ def main(args, ITE=0):
         model = resnet.resnet18().to(device)
     elif args.arch_type == "densenet121":
         model = densenet.densenet121().to(device)
-        # If you want to add extra model paste here
+    elif args.arch_type == "dimenet":
+        model = dimenet_pp.DimeNetPP().to(device)
     else:
         print("\nWrong Model choice\n")
         exit()
@@ -129,7 +140,7 @@ def main(args, ITE=0):
     # Pruning
     # NOTE First Pruning Iteration is of No Compression
     bestr2 = 100
-    best_relative_error = 100
+    best_relative_error = 100000
     ITERATION = args.prune_iterations
     comp = np.zeros(ITERATION, float)
     bestre = np.zeros(ITERATION, float)
@@ -181,8 +192,8 @@ def main(args, ITE=0):
                 test_loss, relative_error = test(model, test_loader, criterion)
                 # writer['test_loss'].add_scalar(f'/Loss/{_ite}/test_loss', test_loss, iter_)
                 # writer['relative_error'].add_scalar(f'/Loss/{_ite}/relative_error', relative_error, iter_)
-                writer[_ite].add_scalar('test_loss', test_loss, iter_)
-                writer[_ite].add_scalar('relative_error', relative_error, iter_)
+                writer.add_scalars('test_loss', {f'{_ite}': test_loss}, iter_)
+                writer.add_scalars('relative_error', {f'{_ite}': relative_error}, iter_)
 
                 # Save Weights
                 if relative_error < best_relative_error:
@@ -198,7 +209,7 @@ def main(args, ITE=0):
             all_loss[iter_] = loss
             all_relative_error[iter_] = relative_error
             # writer['train_loss'].add_scalar(f'/Loss/{_ite}/train', loss, iter_)
-            writer[_ite].add_scalar('train_loss', loss, iter_)
+            writer.add_scalars('train_loss', {f'{_ite}': loss}, iter_)
 
             # Frequency for Printing relative_error and Loss
             if iter_ % args.print_freq == 0:
@@ -291,6 +302,8 @@ def test(model, test_loader, criterion):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
     test_loss = 0
+    output = None
+    target = None
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
@@ -298,6 +311,25 @@ def test(model, test_loader, criterion):
             test_loss += criterion(output, target).item()
         test_loss /= len(test_loader.dataset)
         relative_error = 100. * torch.mean(torch.abs(output - target) / torch.abs(target + 1e-8))
+    return test_loss, relative_error
+
+
+def test1(model, test_loader, criterion):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.eval()
+    test_loss = 0
+    output = None
+    target = None
+    with torch.no_grad():
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            test_loss += criterion(output, target).item()
+        test_loss /= len(test_loader.dataset)
+        if output is not None and target is not None:
+            relative_error = 100. * torch.mean(torch.abs(output - target) / torch.abs(target + 1e-8))
+        else:
+            relative_error = torch.tensor(0)  # or any other default value
     return test_loss, relative_error
 
 
@@ -446,13 +478,13 @@ if __name__ == "__main__":
     parser.add_argument("--valid_freq", default=1, type=int)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--prune_type", default="lt", type=str, help="lt | reinit")
-    parser.add_argument("--gpu", default="1", type=str)
-    parser.add_argument("--dataset", default="fluidanimation", type=str,
+    parser.add_argument("--gpu", default="2", type=str)
+    parser.add_argument("--dataset", default="cosmoflow", type=str,
                         help="mnist | cifar10 | fashionmnist | cifar100 | CFD | fluidanimation | puremd | cosmoflow")
     parser.add_argument("--arch_type", default="fc1", type=str,
                         help="fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121")
-    parser.add_argument("--prune_percent", default=10, type=int, help="Pruning percent")
-    parser.add_argument("--prune_iterations", default=35, type=int, help="Pruning iterations count")
+    parser.add_argument("--prune_percent", default=20, type=int, help="Pruning percent")
+    parser.add_argument("--prune_iterations", default=10, type=int, help="Pruning iterations count")
     parser.add_argument("--device", default="cuda", type=str, help="cuda | cpu")
 
     args = parser.parse_args()
@@ -462,6 +494,8 @@ if __name__ == "__main__":
 
     # FIXME resample
     resample = False
+    if args.dataset == 'cosmoflow':
+        args.batch_size = 64
 
     # Looping Entire process
     # for i in range(0, 5):

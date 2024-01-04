@@ -4,10 +4,14 @@ import torch
 import numpy as np
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
+import yaml
+import tensorflow as tf
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 import torch.utils.data.dataset as dataset
 import matplotlib.pyplot as plt
+from archs.puremd.training.data_container import DataContainer
+from archs.puremd.training.data_provider import DataProvider
 # from dimenet.data_container import DataContainer
 
 
@@ -294,10 +298,13 @@ class Load_Dataset(Dataset):
         # standardize prime_X and prime_Y, and assign them to x and y
         self.set_mean_std()
         self.standardize_data()
-        self.filter_data(filters, filter_method)
+        # self.filter_data(filters, filter_method)
         if device is not None:
             self.x = self.x.to(device)
             self.y = self.y.to(device)
+        if application=='puremd':
+            self.x = self.x[:-400000, :]
+            self.y = self.y[:-400000, :]
 
     def standardize_data(self):
         # # normalize the data between 0 and 1 along dimension 0
@@ -531,8 +538,26 @@ def load_data(args, fs_indices=None, normalize=True):
         #     "/aul/homes/sgao014/datasets/cosmoflow/train", args.device
         # )
         # split train and test set
-        train_set, test_set = dataset.random_split(data_set, [2000, 48],
+        train_set, test_set = dataset.random_split(data_set, [1984, 64],
                                                    generator=torch.Generator().manual_seed(42))
+    elif args.dataset == 'puremd':
+        train = {}
+        validation = {}
+        with open('./archs/puremd/config_pp.yaml', 'r') as c:
+            config = yaml.safe_load(c)
+        dataset_path = '/aul/homes/sgao014/Projects/AI4Science/dimenet/data/qm9_eV.npz'
+        data_container = DataContainer(dataset_path, cutoff=5.0, target_keys=config['targets'])
+
+        # Initialize DataProvider (splits dataset into 3 sets based on data_seed and provides tf.datasets)
+        data_provider = DataProvider(data_container, config['num_train'], config['num_valid'], config['batch_size'],
+                                     seed=config['data_seed'], randomized=True)
+
+        # Initialize datasets
+        train['dataset'] = data_provider.get_dataset('train').prefetch(tf.data.experimental.AUTOTUNE)
+        train['dataset_iter'] = iter(train['dataset'])
+        validation['dataset'] = data_provider.get_dataset('val').prefetch(tf.data.experimental.AUTOTUNE)
+        validation['dataset_iter'] = iter(validation['dataset'])
+        return train, validation
     elif normalize:
         data_set = Load_Dataset(
             x_path=[x_train_set_, x_test_set_],
@@ -604,10 +629,6 @@ def load_ds_from_dir_single(path):
     # tensor_y = torch.stack(tensor_y)
     # dataset = TensorDataset(tensor_x, tensor_y)
     return tensor_x, tensor_y
-
-
-class DataContainer:
-    pass
 
 
 def get_data_loaders(args_):
