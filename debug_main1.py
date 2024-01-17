@@ -2,20 +2,16 @@
 import argparse
 import copy
 import datetime
-import os
-import sys
 import numpy as np
+from sklearn.metrics import r2_score
+from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torchvision
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
+
 import matplotlib.pyplot as plt
 import os
 from tensorboardX import SummaryWriter
-import torchvision.utils as vutils
 import seaborn as sns
 import torch.nn.init as init
 import pickle
@@ -24,15 +20,29 @@ import pickle
 import utils
 from load_dataset import load_data
 
+
+def r2_loss(output, target):
+    return torch.mean(torch.sum(torch.square(target - output), dim=0) / torch.sum(torch.square(target - torch.mean(target, dim=0)), dim=0))
+
+
+def mae_loss(output, target):
+    return torch.mean(torch.abs(output - target))
+
+
+def log_cosh_loss(output, target):
+    return torch.mean(torch.log(torch.cosh(output - target)))
+
+
 now_time = datetime.datetime.now().strftime("%m-%d-%H")
-# Tensorboard initialization
-# writer = SummaryWriter()
-# writer = {'train_loss': SummaryWriter(f'runs/{now_time}/train_loss'),
-#           'test_loss': SummaryWriter(f'runs/{now_time}/test_loss'),
-#           'relative_error': SummaryWriter(f'runs/{now_time}/relative_error')}
 
 # Plotting Style
 sns.set_style('darkgrid')
+debugging = False
+# criterion = nn.CrossEntropyLoss() # Default was F.nll_loss
+criterion_train = nn.MSELoss()
+criterion_test = nn.MSELoss()
+# if args.dataset == 'dimenet':
+#     criterion = nn.MSELoss
 
 
 # Main
@@ -43,95 +53,32 @@ def main(args, ITE=0):
     args.device = device
     reinit = True if args.prune_type == "reinit" else False
 
-    # Data Loader
-    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-    if args.dataset == "mnist":
-        traindataset = datasets.MNIST('../data', train=True, download=True, transform=transform)
-        testdataset = datasets.MNIST('../data', train=False, transform=transform)
-        from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
-
-    elif args.dataset == "cifar10":
-        traindataset = datasets.CIFAR10('../data', train=True, download=True, transform=transform)
-        testdataset = datasets.CIFAR10('../data', train=False, transform=transform)
-        from archs.cifar10 import AlexNet, LeNet5, fc1, vgg, resnet, densenet
-
-    elif args.dataset == "fashionmnist":
-        traindataset = datasets.FashionMNIST('../data', train=True, download=True, transform=transform)
-        testdataset = datasets.FashionMNIST('../data', train=False, transform=transform)
-        from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
-
-    elif args.dataset == "cifar100":
-        traindataset = datasets.CIFAR100('../data', train=True, download=True, transform=transform)
-        testdataset = datasets.CIFAR100('../data', train=False, transform=transform)
-        from archs.cifar100 import AlexNet, fc1, LeNet5, vgg, resnet
-
-        # If you want to add extra datasets paste here
-    elif args.dataset == "CFD":
-        traindataset, testdataset = load_data(args)
-        from archs.CFD import fc1
-
-    elif args.dataset == "fluidanimation":
-        traindataset, testdataset = load_data(args)
-        from archs.fluidanimation import fc1
-
-    elif args.dataset == "puremd":
-        traindataset, testdataset = load_data(args)
-        from archs.puremd import fc1
-
-    elif args.dataset == "cosmoflow":
-        traindataset, testdataset = load_data(args)
-        from archs.cosmoflow import fc1
-
-    elif args.dataset == "dimenet":
-        train, validation = load_data(args)
-        from archs.puremd import dimenet_pp
-
-    else:
-        print("\nWrong Dataset choice \n")
-        exit()
-
-    train_loader = torch.utils.data.DataLoader(traindataset, batch_size=args.batch_size, shuffle=True, num_workers=0,
-                                               drop_last=False)
-    # train_loader = cycle(train_loader)
-    test_loader = torch.utils.data.DataLoader(testdataset, batch_size=args.batch_size, shuffle=False, num_workers=0,
-                                              drop_last=True)
-
-    # Importing Network Architecture
+    # Load Dataset
     global model, LeNet5
-    if args.arch_type == "fc1":
-        model = fc1.fc1().to(device)
-    elif args.arch_type == "lenet5":
-        model = LeNet5.LeNet5().to(device)
-    elif args.arch_type == "alexnet":
-        model = AlexNet.AlexNet().to(device)
-    elif args.arch_type == "vgg16":
-        model = vgg.vgg16().to(device)
-    elif args.arch_type == "resnet18":
-        model = resnet.resnet18().to(device)
-    elif args.arch_type == "densenet121":
-        model = densenet.densenet121().to(device)
-    elif args.arch_type == "dimenet":
-        model = dimenet_pp.DimeNetPP().to(device)
-    else:
-        print("\nWrong Model choice\n")
-        exit()
+    train_loader, test_loader, model = utils.get_essentials(args)
+    # Importing Network Architecture
 
     # Weight Initialization
-    model.apply(weight_init)
+    if args.dataset == "dimenet":
+        pass
+    else:
+        model.apply(weight_init)
 
     # Copying and Saving Initial State
     initial_state_dict = copy.deepcopy(model.state_dict())
-    utils.checkdir(f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/")
-    torch.save(model,
-               f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/initial_state_dict_{args.prune_type}.pth.tar")
+    utils.checkdir(f"{os.getcwd()}/saves/{args.dataset}/{now_time}/")
+    if args.dataset == "dimenet":
+        torch.save(model.state_dict(),
+                   f"{os.getcwd()}/saves/{args.dataset}/{now_time}/initial_state_dict_{args.prune_type}.pth")
+    else:
+        torch.save(model,
+                   f"{os.getcwd()}/saves/{args.dataset}/{now_time}/initial_state_dict_{args.prune_type}.pth.tar")
 
     # Making Initial Mask
     make_mask(model)
 
     # Optimizer and Loss
-    optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-4)
-    # criterion = nn.CrossEntropyLoss() # Default was F.nll_loss
-    criterion = r2_loss
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     # Layer Looper
     for name, param in model.named_parameters():
@@ -139,35 +86,20 @@ def main(args, ITE=0):
 
     # Pruning
     # NOTE First Pruning Iteration is of No Compression
-    bestr2 = 100
-    best_relative_error = 100000
+    best_r2_loss = 100
+    best_mean_r2_score = -100
     ITERATION = args.prune_iterations
     comp = np.zeros(ITERATION, float)
-    bestre = np.zeros(ITERATION, float)
+    best_r2_scores = np.zeros(ITERATION, float)
     step = 0
     all_loss = np.zeros(args.end_iter, float)
-    all_relative_error = np.zeros(args.end_iter, float)
+    all_r2_loss = np.zeros(args.end_iter, float)
 
     for _ite in range(args.start_iter, ITERATION):
         if not _ite == 0:
             prune_by_percentile(args.prune_percent, resample=resample, reinit=reinit)
             if reinit:
                 model.apply(weight_init)
-                # if args.arch_type == "fc1":
-                #    model = fc1.fc1().to(device)
-                # elif args.arch_type == "lenet5":
-                #    model = LeNet5.LeNet5().to(device)
-                # elif args.arch_type == "alexnet":
-                #    model = AlexNet.AlexNet().to(device)
-                # elif args.arch_type == "vgg16":
-                #    model = vgg.vgg16().to(device)
-                # elif args.arch_type == "resnet18":
-                #    model = resnet.resnet18().to(device)
-                # elif args.arch_type == "densenet121":
-                #    model = densenet.densenet121().to(device)
-                # else:
-                #    print("\nWrong Model choice\n")
-                #    exit()
                 step = 0
                 for name, param in model.named_parameters():
                     if 'weight' in name:
@@ -177,7 +109,7 @@ def main(args, ITE=0):
                 step = 0
             else:
                 original_initialization(mask, initial_state_dict)
-            optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+            optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
         print(f"\n--- Pruning Level [{ITE}:{_ite}/{ITERATION}]: ---")
 
         # Print the table of Nonzeros in each layer
@@ -189,101 +121,69 @@ def main(args, ITE=0):
 
             # Frequency for Testing
             if iter_ % args.valid_freq == 0:
-                test_loss, relative_error = test(model, test_loader, criterion)
-                # writer['test_loss'].add_scalar(f'/Loss/{_ite}/test_loss', test_loss, iter_)
-                # writer['relative_error'].add_scalar(f'/Loss/{_ite}/relative_error', relative_error, iter_)
-                writer.add_scalars('test_loss', {f'{_ite}': test_loss}, iter_)
-                writer.add_scalars('relative_error', {f'{_ite}': relative_error}, iter_)
+                test_loss, r2_loss, r2 = test(model, test_loader, criterion_test)
+                writer.add_scalars('loss', {f'{_ite}_test_loss': test_loss}, iter_)
+                writer.add_scalars('r2_loss', {f'{_ite}_r2_loss': test_loss}, iter_)
+                writer.add_scalars('r2_score', {f'{_ite}_r2_score': np.mean(r2)}, iter_)
 
                 # Save Weights
-                if relative_error < best_relative_error:
-                    best_relative_error = relative_error
-                    utils.checkdir(f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/")
-                    torch.save(model,
-                               f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/{_ite}_model_{args.prune_type}.pth.tar")
-                if test_loss < bestr2:
-                    bestr2 = test_loss
+                if test_loss < best_r2_loss:
+                    best_r2_loss = test_loss
+                    utils.checkdir(f"{os.getcwd()}/saves/{args.dataset}/{now_time}/")
+                    if args.dataset == "dimenet":
+                        torch.save(model.state_dict(),
+                                   f"{os.getcwd()}/saves/{args.dataset}/{now_time}/{_ite}_model_{args.prune_type}.pth")
+                    else:
+                        torch.save(model,
+                                   f"{os.getcwd()}/saves/{args.dataset}/{now_time}/{_ite}_model_{args.prune_type}.pth.tar")
+                if np.mean(r2) > best_mean_r2_score:
+                    best_mean_r2_score = np.mean(r2)
 
             # Training
-            loss = train(model, train_loader, optimizer, criterion)
+            loss = train(model, train_loader, optimizer, criterion_train)
+
             all_loss[iter_] = loss
-            all_relative_error[iter_] = relative_error
+            all_r2_loss[iter_] = best_r2_loss
             # writer['train_loss'].add_scalar(f'/Loss/{_ite}/train', loss, iter_)
-            writer.add_scalars('train_loss', {f'{_ite}': loss}, iter_)
+            writer.add_scalars('loss', {f'{_ite}_train_loss': loss}, iter_)
 
             # Frequency for Printing relative_error and Loss
             if iter_ % args.print_freq == 0:
                 pbar.set_description(
-                    f'Train Epoch: {iter_}/{args.end_iter} Loss: {loss:.6f} R2: {bestr2:.8f} relative_error: {relative_error:.4f}% Best relative error: {best_relative_error:.4f}%')
+                    f'Train Epoch: {iter_}/{args.end_iter} Train Loss: {loss:.6f} test loss: {test_loss:.8f} '
+                    f'test r2 loss: {r2_loss:.6f}  test r2 scores: {r2} beast mean r2: {best_mean_r2_score:.4f}')
 
-        bestre[_ite] = best_relative_error
-
-        # Plotting Loss (Training), relative_error (Testing), Iteration Curve
-        # NOTE Loss is computed for every iteration while relative_error is computed only for every {args.valid_freq} iterations. Therefore relative_error saved is constant during the uncomputed iterations.
-        # NOTE Normalized the relative_error to [0,100] for ease of plotting.
-        plt.plot(np.arange(1, (args.end_iter) + 1),
-                 100 * (all_loss - np.min(all_loss)) / np.ptp(all_loss).astype(float), c="blue", label="Loss")
-        plt.plot(np.arange(1, (args.end_iter) + 1), all_relative_error, c="red", label="relative_error")
-        plt.title(f"Loss Vs relative_error Vs Iterations ({args.dataset},{args.arch_type})")
-        plt.xlabel("Iterations")
-        plt.ylabel("Loss and relative_error")
-        plt.legend()
-        plt.grid(color="gray")
-        utils.checkdir(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/")
-        plt.savefig(
-            f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_LossVsRelative_error_{comp1}.png",
-            dpi=1200)
-        plt.close()
-
-        # Dump Plot values
-        utils.checkdir(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/")
-        all_loss.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_all_loss_{comp1}.dat")
-        all_relative_error.dump(
-            f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_all_relative_error_{comp1}.dat")
+        best_r2_scores[_ite] = np.mean(r2)
 
         # Dumping mask
-        utils.checkdir(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/")
-        with open(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_mask_{comp1}.pkl",
+        utils.checkdir(f"{os.getcwd()}/dumps/lt/{args.dataset}/{now_time}/")
+        with open(f"{os.getcwd()}/dumps/lt/{args.dataset}/{now_time}/{args.prune_type}_mask_{comp1}.pkl",
                   'wb') as fp:
             pickle.dump(mask, fp)
 
         # Making variables into 0
-        best_relative_error = 100
-        bestr2 = 100
+        best_r2_loss = 100
+        best_mean_r2_score = -100
         all_loss = np.zeros(args.end_iter, float)
-        all_relative_error = np.zeros(args.end_iter, float)
-
-    # Dumping Values for Plotting
-    utils.checkdir(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/")
-    comp.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_compression.dat")
-    bestre.dump(f"{os.getcwd()}/dumps/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_bestrelativeerror.dat")
-
-    # Plotting
-    a = np.arange(args.prune_iterations)
-    plt.plot(a, bestre, c="blue", label="Winning tickets")
-    plt.title(f"Test relative error vs Unpruned Weights Percentage ({args.dataset},{args.arch_type})")
-    plt.xlabel("Unpruned Weights Percentage")
-    plt.ylabel("test relative error")
-    plt.xticks(a, comp, rotation="vertical")
-    plt.ylim(0, 100)
-    plt.legend()
-    plt.grid(color="gray")
-    utils.checkdir(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/")
-    plt.savefig(f"{os.getcwd()}/plots/lt/{args.arch_type}/{args.dataset}/{args.prune_type}_reeVsWeights.png", dpi=1200)
-    plt.close()
 
 
 # Function for Training
 def train(model, train_loader, optimizer, criterion):
-    EPS = 1e-6
+    EPS = 1e-28
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    total_loss = 0
     model.train()
-    for batch_idx, (imgs, targets) in enumerate(train_loader):
+    for batch_idx, (datas) in enumerate(train_loader):
+        if isinstance(datas, dict):
+            data = datas
+            target = datas['targets'][0]
+        else:
+            data, target = datas
+    # for batch_idx, (imgs, targets) in enumerate(train_loader):
+            data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
-        # imgs, targets = next(train_loader)
-        imgs, targets = imgs.to(device), targets.to(device)
-        output = model(imgs)
-        train_loss = criterion(output, targets)
+        output = model(data)
+        train_loss = criterion(output, target)
         train_loss.backward()
 
         # Freezing Pruned weights by making their gradients Zero
@@ -294,24 +194,42 @@ def train(model, train_loader, optimizer, criterion):
                 grad_tensor = np.where(tensor < EPS, 0, grad_tensor)
                 p.grad.data = torch.from_numpy(grad_tensor).to(device)
         optimizer.step()
-    return train_loss.item()
+        total_loss += train_loss.item() / len(train_loader)
+        if debugging:
+            print(f'train loss: {train_loss.item()}')
+    mean_loss = total_loss
+
+    if debugging:
+        print(f'mean: train loss: {mean_loss}, len: {len(train_loader)}')
+    return mean_loss
 
 
 # Function for Testing
 def test(model, test_loader, criterion):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
-    test_loss = 0
-    output = None
-    target = None
+    test_losses = 0
+
     with torch.no_grad():
-        for data, target in test_loader:
-            data, target = data.to(device), target.to(device)
+        for i, (datas) in enumerate(test_loader):
+            if isinstance(datas, dict):
+                data = datas
+                target = datas['targets'][0]
+            else:
+                data, target = datas
+            # for data, target in test_loader:
+                data, target = data.to(device), target.to(device)
             output = model(data)
-            test_loss += criterion(output, target).item()
-        test_loss /= len(test_loader.dataset)
-        relative_error = 100. * torch.mean(torch.abs(output - target) / torch.abs(target + 1e-8))
-    return test_loss, relative_error
+            test_loss = criterion(output, target).item()
+            r2_l = r2_loss(output, target).item()
+            r2 = r2_score(target.cpu(), output.cpu(), multioutput='raw_values')
+            test_losses += test_loss
+            if debugging:
+                print(f'test loss: {test_loss}, r2 loss: {r2_l}, r2 score: {r2}')
+        test_losses /= len(test_loader)
+        if debugging:
+            print(f'mean: test loss: {test_losses}, r2 score: {r2}, len: {len(test_loader)}')
+    return test_losses, r2_l, r2
 
 
 def test1(model, test_loader, criterion):
@@ -460,27 +378,24 @@ def weight_init(m):
                 init.normal_(param.data)
 
 
-def r2_loss(output, target):
-    return torch.sum(torch.square(target - output)) / torch.sum(torch.square(target - torch.mean(target)))
-
-
 if __name__ == "__main__":
     # from gooey import Gooey
     # @Gooey
 
     # Arguement Parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("--lr", default=1.2e-3, type=float, help="Learning rate")
+    parser.add_argument("--lr", default=1e-3, type=float, help="Learning rate")
     parser.add_argument("--batch_size", default=3000, type=int)
     parser.add_argument("--start_iter", default=0, type=int)
-    parser.add_argument("--end_iter", default=50, type=int)  # 100
+    parser.add_argument("--end_iter", default=100, type=int)  # 100
     parser.add_argument("--print_freq", default=1, type=int)
     parser.add_argument("--valid_freq", default=1, type=int)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--prune_type", default="lt", type=str, help="lt | reinit")
     parser.add_argument("--gpu", default="2", type=str)
-    parser.add_argument("--dataset", default="cosmoflow", type=str,
-                        help="mnist | cifar10 | fashionmnist | cifar100 | CFD | fluidanimation | puremd | cosmoflow")
+    parser.add_argument("--dataset", default="puremd", type=str,
+                        help="mnist | cifar10 | fashionmnist | cifar100 | "
+                             "CFD | fluidanimation | puremd | cosmoflow | dimenet")
     parser.add_argument("--arch_type", default="fc1", type=str,
                         help="fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121")
     parser.add_argument("--prune_percent", default=20, type=int, help="Pruning percent")
@@ -496,6 +411,16 @@ if __name__ == "__main__":
     resample = False
     if args.dataset == 'cosmoflow':
         args.batch_size = 64
+        args.lr = 0.0002
+        criterion_test = log_cosh_loss
+        criterion_train = log_cosh_loss
+    elif args.dataset == 'dimenet':
+        args.batch_size = 1
+
+    # for debugging
+    debugging = False
+    if debugging:
+        args.end_iter = 3
 
     # Looping Entire process
     # for i in range(0, 5):

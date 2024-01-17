@@ -3,33 +3,23 @@ This file is used to train the tensorflow model like dimenet_pp.
 """
 # Importing Libraries
 import argparse
-import copy
 import datetime
-import os
-import sys
-import tensorflow as tf
 import numpy as np
 import yaml
 from tqdm import tqdm
 import torch
-import torch.nn as nn
-
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import matplotlib.pyplot as plt
 import os
 from tensorboardX import SummaryWriter
 import seaborn as sns
-import torch.nn.init as init
 import pickle
 
 # Custom Libraries
 import utils
 from archs.puremd.dimenet_pp import get_trainer, extract_dense_layers
-from archs.puremd.layers.embedding_block import EmbeddingBlock
-from archs.puremd.layers.interaction_pp_block import InteractionPPBlock
-from archs.puremd.layers.output_pp_block import OutputPPBlock
-from archs.puremd.training.trainer import Trainer
+
 from load_dataset import load_data
 
 now_time = datetime.datetime.now().strftime("%m-%d-%H")
@@ -101,6 +91,8 @@ def main(args, ITE=0):
     # model.save(f"{os.getcwd()}/saves/{args.arch_type}/{args.dataset}/initial_state_dict_{args.prune_type}", save_format="tf")
 
     # Making Initial Mask
+    inputs, targets = next(train_loader['dataset_iter'])
+    model(inputs)
     make_mask(model)
 
     trainer = get_trainer(model)
@@ -282,8 +274,8 @@ def test(validation, trainer):
         relative_errors.append(relative_error)
 
     trainer.restore_variable_backups()
-    return np.average(losses, weights=sample_numbers), np.average(relative_errors)
-
+    return np.average(np.array(losses), weights=np.array(sample_numbers)), np.average(np.array(relative_errors))
+    # return np.mean(losses), np.mean(relative_errors)
 
 def test1(model, test_loader, criterion):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -334,21 +326,18 @@ def prune_by_percentile_torch(percent, resample=False, reinit=False, **kwargs):
 def prune_by_percentile(percent, model, mask):
     global step
     step = 0
-    for layer in model.layers:
-        if isinstance(layer, tf.keras.layers.Dense) or \
-                isinstance(layer, tf.keras.layers.Conv2D) or \
-                isinstance(layer, tf.keras.layers.Conv1D):
-            weights = layer.get_weights()[0]
-            alive = weights[np.nonzero(weights)]  # flattened array of nonzero values
-            percentile_value = np.percentile(abs(alive), percent)
+    for layer in model.dense_layers:
+        weights = layer.get_weights()[0]
+        alive = weights[np.nonzero(weights)]
+        percentile_value = np.percentile(abs(alive), percent)
 
-            # Create new mask
-            new_mask = np.where(abs(weights) < percentile_value, 0, mask[step])
+        # Create new mask
+        new_mask = np.where(abs(weights) < percentile_value, 0, mask[layer.name])
 
-            # Apply new mask to the weights
-            layer.set_weights([weights * new_mask, layer.get_weights()[1]])
-            mask[step] = new_mask
-            step += 1
+        # Apply new mask to the weights
+        layer.set_weights([weights * new_mask, layer.get_weights()[1]])
+        mask[layer.name] = new_mask
+        step += 1
     step = 0
 
 
@@ -372,30 +361,10 @@ def make_mask_torch(model):
 
 def make_mask(model):
     global mask
-    mask = []
-
-    dense_layers = []
-    for layer in model.layers:
-        if isinstance(layer, EmbeddingBlock) or \
-                isinstance(layer, InteractionPPBlock) or \
-                isinstance(layer, OutputPPBlock):
-            extract_dense_layers(layer, dense_layers)
-
-    # 输出Dense层信息
-    for layer in dense_layers:
-        print("层名称:", layer.name)
-        print("输出维度:", layer.units)
-        print("激活函数:", layer.activation.__name__)
-        print("-----")
-
-    # for blocks in model.layers:
-    #     if isinstance(blocks, EmbeddingBlock) or \
-    #             isinstance(blocks, InteractionPPBlock) or \
-    #             isinstance(blocks, OutputPPBlock):
-    #         for layer in blocks.layers:
-    #             if isinstance(layer, tf.keras.layers.Dense):
-    #                 weight_shape = layer.weights[0].shape
-    #                 mask.append(np.ones(weight_shape))
+    mask = {}
+    for layer in model.dense_layers:
+        weights = layer.get_weights()[0]
+        mask[layer.name] = np.ones_like(weights)
     return mask
 
 
@@ -413,11 +382,8 @@ def original_initialization_torch(mask_temp, initial_state_dict):
 
 
 def original_initialization(mask, initial_weights):
-    for i, layer in enumerate(model.layers):
-        if isinstance(layer, tf.keras.layers.Dense) or \
-                isinstance(layer, tf.keras.layers.Conv2D) or \
-                isinstance(layer, tf.keras.layers.Conv1D):
-            layer.set_weights([mask[i] * initial_weights[i], layer.get_weights()[1]])
+    for layer in model.dense_layers:
+        layer.set_weights([mask[layer.name] * initial_weights[layer.name], layer.get_weights()[1]])
 
 
 def r2_loss(output, target):
@@ -450,7 +416,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1, 2, 3'
+    os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
     # FIXME resample
     resample = False
@@ -460,3 +426,6 @@ if __name__ == "__main__":
     # Looping Entire process
     # for i in range(0, 5):
     main(args, ITE=1)
+
+
+# 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

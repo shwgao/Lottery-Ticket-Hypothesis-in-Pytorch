@@ -4,14 +4,12 @@ import torch
 import numpy as np
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-import yaml
-import tensorflow as tf
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 import torch.utils.data.dataset as dataset
 import matplotlib.pyplot as plt
-from archs.puremd.training.data_container import DataContainer
-from archs.puremd.training.data_provider import DataProvider
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from archs.puremd_torch.data_container import DataContainer
 # from dimenet.data_container import DataContainer
 
 
@@ -19,17 +17,17 @@ class Init_Dataset:
     def __init__(self, application, write_down=False, delete_constant=False):
         self.application = application
         self.LengthOfDataset = None
-        if application == "fluid":
+        if application == "fluidanimation":
             self.LengthOfDataset = 3294120
-            self.input_vector_dir = "../Dataset/fluidanimation/inputvector_test.txt"
-            self.input_coef_dir = "../Dataset/fluidanimation/inputcoef_test.txt"
+            self.input_vector_dir = "/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/Dataset/fluidanimation/inputvector_test.txt"
+            self.input_coef_dir = "/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/Dataset/fluidanimation/inputcoef_test.txt"
             self.output_vector_dir = (
-                "../../Dataset/fluidanimation/outputvector_test.txt"
+                "/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/Dataset/fluidanimation/outputvector_test.txt"
             )
         elif application == "CFD":
             self.LengthOfDataset = 2329104
-            self.input_file = "../Dataset/CFD/input.txt"
-            self.output_file = "../Dataset/CFD/output.txt"
+            self.input_file = "/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/Dataset/CFD/input.txt"
+            self.output_file = "/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/Dataset/CFD/output.txt"
         elif application == "puremd":
             self.LengthOfDataset = 1040407
         else:
@@ -39,9 +37,9 @@ class Init_Dataset:
 
         self.get_data()
 
-        self.X_train, self.X_test, self.Y_train, self.Y_test = train_test_split(
-            self.prime_X, self.prime_Y, test_size=0.2, random_state=42
-        )
+        # self.X_train, self.X_test, self.Y_train, self.Y_test = train_test_split(
+        #     self.prime_X, self.prime_Y, test_size=0.2, random_state=42
+        # )
         if write_down:
             self.write_train_test(delete_constant)
 
@@ -63,10 +61,6 @@ class Init_Dataset:
             save_file = "../Dataset/puremd/"
         else:
             print("Application error")
-
-        if delete_constant:
-            X_train = delete_constant_columns(self.X_train)
-            X_test = delete_constant_columns(self.X_test)
 
         # write down the datas X_train, X_test, Y_train, Y_test into specific files
         with open(os.path.join(save_file, "X_train_filtered.txt"), "w") as f:
@@ -94,7 +88,7 @@ class Init_Dataset:
                 f.write("\n")
 
     def get_data(self):
-        if self.application == "fluid":
+        if self.application == "fluidanimation":
             self.get_data_fluid()
         elif self.application == "CFD":
             self.get_data_CFD()
@@ -134,9 +128,15 @@ class Init_Dataset:
                 float(value) for _ in range(num_lines) for value in f.readline().split()
             ]
 
+        X = [c + v for c, v in zip(coef, vector)]
+
+        X = delete_constant_columns(np.array(X))
+        scaler = StandardScaler()
+        X_normalized = scaler.fit_transform(X)
+
         # Create X and Y lists using list comprehension
         self.prime_Y = np.array(self.reshape_vector(x5, 3, 1))
-        self.prime_X = np.array([c + v for c, v in zip(coef, vector)])
+        self.prime_X = np.array(X_normalized)
 
     def get_data_CFD(self):
         NUM_ATOMS = 35
@@ -156,9 +156,13 @@ class Init_Dataset:
         NUM_ATOMS = 5
         NUM_DIMENSIONS = 1
 
+        X = delete_constant_columns(np.array(X))
+        scaler = StandardScaler()
+        X_normalized = scaler.fit_transform(X)
+
         Y = self.reshape_vector(out, NUM_ATOMS, NUM_DIMENSIONS)
 
-        self.prime_X = np.array(X)
+        self.prime_X = np.array(X_normalized)
         self.prime_Y = np.array(Y)
 
     def get_data_puremd(self):
@@ -166,7 +170,7 @@ class Init_Dataset:
         NUM_DIMENSIONS = 1
         LengthOfDatast = self.LengthOfDataset
         # Read the program input
-        with open("../Dataset/puremd/input_inner_loop_data3/C2dbo.txt", "r") as f:
+        with open("/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/Dataset/puremd/input_inner_loop_data3/C2dbo.txt", "r") as f:
             x1 = [
                 float(f.readline())
                 for _ in range(NUM_ATOMS * NUM_DIMENSIONS * LengthOfDatast)
@@ -178,7 +182,7 @@ class Init_Dataset:
         NUM_ATOMS = 3
         NUM_DIMENSIONS = 1
         # Read the program input
-        with open("../Dataset/puremd/input_inner_loop_data3/ext_press.txt", "r") as f:
+        with open("/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/Dataset/puremd/input_inner_loop_data3/ext_press.txt", "r") as f:
             num_lines = NUM_ATOMS * NUM_DIMENSIONS * LengthOfDatast
             x2 = [
                 float(value) for _ in range(num_lines) for value in f.readline().split()
@@ -189,7 +193,7 @@ class Init_Dataset:
         NUM_ATOMS = 2
         NUM_DIMENSIONS = 1
         # Read the program input
-        with open("../Dataset/puremd/input_inner_loop_data3/index.txt", "r") as f:
+        with open("/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/Dataset/puremd/input_inner_loop_data3/index.txt", "r") as f:
             num_lines = NUM_ATOMS * NUM_DIMENSIONS * LengthOfDatast
             x2 = [
                 float(value) for _ in range(num_lines) for value in f.readline().split()
@@ -201,7 +205,7 @@ class Init_Dataset:
         NUM_DIMENSIONS = 1
         # Read the program input
         with open(
-            "../Dataset/puremd/input_inner_loop_data3/nbr_k_bo_data2.txt", "r"
+            "/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/Dataset/puremd/input_inner_loop_data3/nbr_k_bo_data2.txt", "r"
         ) as f:
             num_lines = NUM_ATOMS * NUM_DIMENSIONS * LengthOfDatast
             x3 = [
@@ -213,7 +217,7 @@ class Init_Dataset:
         NUM_ATOMS = 3
         NUM_DIMENSIONS = 1
         # Read the program input
-        with open("../Dataset/puremd/input_inner_loop_data3/temp.txt", "r") as f:
+        with open("/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/Dataset/puremd/input_inner_loop_data3/temp.txt", "r") as f:
             num_lines = NUM_ATOMS * NUM_DIMENSIONS * LengthOfDatast
             x4 = [
                 float(value) for _ in range(num_lines) for value in f.readline().split()
@@ -224,7 +228,7 @@ class Init_Dataset:
         NUM_ATOMS = 3
         NUM_DIMENSIONS = 2
         # Read the program input
-        with open("../Dataset/puremd/input_inner_loop_data3/rel_box.txt", "r") as f:
+        with open("/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/Dataset/puremd/input_inner_loop_data3/rel_box.txt", "r") as f:
             num_lines = NUM_ATOMS * NUM_DIMENSIONS * LengthOfDatast
             x4 = [
                 float(value) for _ in range(num_lines) for value in f.readline().split()
@@ -236,7 +240,7 @@ class Init_Dataset:
         NUM_DIMENSIONS = 1
         # Read the program output
         with open(
-            "../Dataset/puremd/input_inner_loop_data3/temp_output_2.txt", "r"
+            "/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/Dataset/puremd/input_inner_loop_data3/temp_output_2.txt", "r"
         ) as f:
             num_lines = NUM_ATOMS * NUM_DIMENSIONS * LengthOfDatast
             x4 = [
@@ -257,8 +261,12 @@ class Init_Dataset:
         #     )
         # ]
 
+        # self.prime_X = np.array(self.prime_X)[:-400000, :]
+        # self.prime_Y = np.array(temp_output)[:-400000, :]
         self.prime_X = np.array(self.prime_X)
         self.prime_Y = np.array(temp_output)
+
+
 
     def reshape_vector(self, vector, num_atoms, num_dimensions):
         array = [
@@ -285,6 +293,7 @@ class Load_Dataset(Dataset):
         filters=None,
         filter_method="PCA",
         device=None,
+        normalize=False,
     ):
         self.application = application
         self.mean_Y = None
@@ -297,14 +306,18 @@ class Load_Dataset(Dataset):
         self.get_data_from_file(x_path, y_path)  # initial prime_X and prime_Y
         # standardize prime_X and prime_Y, and assign them to x and y
         self.set_mean_std()
-        self.standardize_data()
+        if normalize:
+            self.standardize_data()
+        else:
+            self.x = torch.tensor(self.prime_X, dtype=torch.float32)
+            self.y = torch.tensor(self.prime_Y, dtype=torch.float32)
         # self.filter_data(filters, filter_method)
         if device is not None:
             self.x = self.x.to(device)
             self.y = self.y.to(device)
-        if application=='puremd':
-            self.x = self.x[:-400000, :]
-            self.y = self.y[:-400000, :]
+        # if application=='puremd':  # fixme: seems not correct
+        #     self.x = self.x[:-400000, :]
+        #     self.y = self.y[:-400000, :]
 
     def standardize_data(self):
         # # normalize the data between 0 and 1 along dimension 0
@@ -313,12 +326,15 @@ class Load_Dataset(Dataset):
         # Y_standardized = (self.prime_Y - np.array(self.mean_Y)) / np.array(self.std_Y)
         X_standardized = self.prime_X
         Y_standardized = self.prime_Y
-        X_normalized = (X_standardized - np.min(X_standardized, axis=0)) / (
-            np.max(X_standardized, axis=0) - np.min(X_standardized, axis=0)
-        )
-        Y_normalized = (Y_standardized - np.min(Y_standardized, axis=0)) / (
-            np.max(Y_standardized, axis=0) - np.min(Y_standardized, axis=0)
-        )
+        # X_normalized = (X_standardized - np.min(X_standardized, axis=0) - 1e-6) / (
+        #     np.max(X_standardized, axis=0) - np.min(X_standardized, axis=0) + 2e-6
+        # )
+        # Y_normalized = (Y_standardized - np.min(Y_standardized, axis=0) - 1e-6) / (
+        #     np.max(Y_standardized, axis=0) - np.min(Y_standardized, axis=0) + 2e-6
+        # )
+        scaler = MinMaxScaler(feature_range=(0.1, 0.9))
+        X_normalized = scaler.fit_transform(X_standardized)
+        Y_normalized = scaler.fit_transform(Y_standardized)
 
         self.x = torch.tensor(X_normalized, dtype=torch.float32)
         self.y = torch.tensor(Y_normalized, dtype=torch.float32)
@@ -392,6 +408,130 @@ class Load_Dataset(Dataset):
 
     def __len__(self):
         return self.x.shape[0]
+
+
+class Load_Dataset_or(Dataset):
+    def __init__(
+        self,
+        x_path=None,
+        y_path=None,
+        application="fluid",
+        filters=None,
+        filter_method="PCA",
+        device=None,
+        normalize=False,
+    ):
+        self.or_data = Init_Dataset(application)
+        self.prime_X = self.or_data.prime_X
+        self.prime_Y = self.or_data.prime_Y
+        self.application = application
+        self.mean_Y = None
+        self.std_Y = None
+        self.indices = None  # indices of the selected features
+        self.x = torch.tensor(self.prime_X, dtype=torch.float32)  # input of dataset for dataloader
+        self.y = torch.tensor(self.prime_Y, dtype=torch.float32)  # output of dataset for dataloader
+        # standardize prime_X and prime_Y, and assign them to x and y
+        self.set_mean_std()
+        if normalize:
+            self.standardize_data()
+        # self.filter_data(filters, filter_method)
+        if device is not None:
+            self.x = self.x.to(device)
+            self.y = self.y.to(device)
+        # if application=='puremd':  # fixme: seems not correct
+        #     self.x = self.x[:-400000, :]
+        #     self.y = self.y[:-400000, :]
+
+    def standardize_data(self):
+        # # normalize the data between 0 and 1 along dimension 0
+        # scaler = StandardScaler()
+        # X_standardized = scaler.fit_transform(self.prime_X)
+        # Y_standardized = (self.prime_Y - np.array(self.mean_Y)) / np.array(self.std_Y)
+        X_standardized = self.prime_X
+        Y_standardized = self.prime_Y
+        # X_normalized = (X_standardized - np.min(X_standardized, axis=0) - 1e-6) / (
+        #     np.max(X_standardized, axis=0) - np.min(X_standardized, axis=0) + 2e-6
+        # )
+        # Y_normalized = (Y_standardized - np.min(Y_standardized, axis=0) - 1e-6) / (
+        #     np.max(Y_standardized, axis=0) - np.min(Y_standardized, axis=0) + 2e-6
+        # )
+        scaler = MinMaxScaler(feature_range=(0.1, 0.9))
+        X_normalized = scaler.fit_transform(X_standardized)
+        Y_normalized = scaler.fit_transform(Y_standardized)
+
+        self.x = torch.tensor(X_normalized, dtype=torch.float32)
+        self.y = torch.tensor(Y_normalized, dtype=torch.float32)
+
+    def get_data_from_file(self, x_path, y_path):
+        # Read data from file in file_path, each line is a vector
+        if isinstance(x_path, str):
+            with open(x_path, "r") as f:
+                data_lines = f.readlines()
+                x = [[float(value) for value in line.split()] for line in data_lines]
+            with open(y_path, "r") as f:
+                data_lines = f.readlines()
+                y = [[float(value) for value in line.split()] for line in data_lines]
+            self.prime_X = np.array(x)
+            self.prime_Y = np.array(y)
+        elif isinstance(x_path, list):
+            # if there is multiple files, we need to read them one by one
+            for i in range(len(x_path)):
+                with open(x_path[i], "r") as f:
+                    data_lines = f.readlines()
+                    x = [[float(value) for value in line.split()] for line in data_lines]
+                with open(y_path[i], "r") as f:
+                    data_lines = f.readlines()
+                    y = [[float(value) for value in line.split()] for line in data_lines]
+                if i == 0:
+                    self.prime_X = np.array(x)
+                    self.prime_Y = np.array(y)
+                else:
+                    self.prime_X = np.concatenate((self.prime_X, np.array(x)), axis=0)
+                    self.prime_Y = np.concatenate((self.prime_Y, np.array(y)), axis=0)
+
+    def filter_data(self, filters, filter_method):
+        if filters is not None:
+            if isinstance(filters, list):
+                self.x = self.x[:, filters]
+            elif isinstance(filters, int) or isinstance(filters, feature_selectors):
+                fs = feature_selectors(
+                    self.x, self.y, n_components=filters, method=filter_method
+                )
+                self.x = torch.tensor(fs.fit(), dtype=torch.float32)
+                self.indices = fs.indices
+            else:
+                print("filters type error")
+
+    def set_mean_std(self):
+        """Set the mean and std of the dataset, used for standardization and recover"""
+        if self.application == "fluidanimation":
+            self.mean_Y = [0.12768913, 0.05470352, 0.14003364]
+            self.std_Y = [2.07563408, 1.59399168, 2.06319435]
+        elif self.application == "CFD":
+            self.mean_Y = [
+                -2.01850154e-08,
+                -5.23806580e-11,
+                7.29894413e-12,
+                5.15219587e-12,
+                1.15924407e-11,
+            ]
+            self.std_Y = [0.38392921, 0.12564681, 0.12619844, 0.21385977, 0.68862844]
+        elif self.application == "puremd":
+            self.mean_Y = [
+                1.8506536384110004e-06,
+                -0.003247667874206878,
+                0.0007951518742184539,
+            ]
+            self.std_Y = [0.30559314964628986, 0.44421521232555966, 0.4909015024281119]
+        else:
+            print("Application error")
+
+    def __getitem__(self, index):
+        return self.x[index], self.y[index]
+
+    def __len__(self):
+        return self.x.shape[0]
+
 
 
 class Load_Dataset_Cosmoflow(Dataset):
@@ -515,7 +655,7 @@ class Visualize_Dataset:
         print(correlation_matrix)
 
 
-def load_data(args, fs_indices=None, normalize=True):
+def load_data(args, fs_indices=None, normalize=False):
     # filtered means there is no constant columns
     data_dir = '/aul/homes/sgao014/Projects/AI4Science/Lottery-Ticket-Hypothesis-in-Pytorch/Dataset/CFD/'
     data_dir = data_dir.replace("CFD", args.dataset)
@@ -540,49 +680,47 @@ def load_data(args, fs_indices=None, normalize=True):
         # split train and test set
         train_set, test_set = dataset.random_split(data_set, [1984, 64],
                                                    generator=torch.Generator().manual_seed(42))
-    elif args.dataset == 'puremd':
-        train = {}
-        validation = {}
-        with open('./archs/puremd/config_pp.yaml', 'r') as c:
-            config = yaml.safe_load(c)
-        dataset_path = '/aul/homes/sgao014/Projects/AI4Science/dimenet/data/qm9_eV.npz'
-        data_container = DataContainer(dataset_path, cutoff=5.0, target_keys=config['targets'])
+    elif args.dataset == 'dimenet':
+        data_container = DataContainer(
+            '/aul/homes/sgao014/Projects/AI4Science/dimenet/data/qm9_eV.npz',
+            cutoff=5.0,
+            target_keys=['U0'],
+            batch_size=256,
+            device=args.device
+        )
+        train_set, test_set = dataset.random_split(
+            data_container, [ceil(0.8 * len(data_container)), len(data_container) - ceil(0.8 * len(data_container))]
+        )
 
-        # Initialize DataProvider (splits dataset into 3 sets based on data_seed and provides tf.datasets)
-        data_provider = DataProvider(data_container, config['num_train'], config['num_valid'], config['batch_size'],
-                                     seed=config['data_seed'], randomized=True)
-
-        # Initialize datasets
-        train['dataset'] = data_provider.get_dataset('train').prefetch(tf.data.experimental.AUTOTUNE)
-        train['dataset_iter'] = iter(train['dataset'])
-        validation['dataset'] = data_provider.get_dataset('val').prefetch(tf.data.experimental.AUTOTUNE)
-        validation['dataset_iter'] = iter(validation['dataset'])
-        return train, validation
-    elif normalize:
-        data_set = Load_Dataset(
+        return train_set, test_set
+    else:
+        data_set = Load_Dataset_or(
             x_path=[x_train_set_, x_test_set_],
             y_path=[y_train_set_, y_test_set_],
             filters=fs_indices,
             application=args.dataset,
+            normalize=normalize,
         )
-        train_set_len = int(0.67 * len(data_set))
+        train_set_len = int(0.8 * len(data_set))
         train_set, test_set = dataset.random_split(data_set, [train_set_len, len(data_set)-train_set_len],
                                                    generator=torch.Generator().manual_seed(42))
-    else:
-        train_set = Load_Dataset(
-            x_path=x_train_set_,
-            y_path=y_train_set_,
-            filters=fs_indices,
-            application=args.dataset,
-        )
-        if args.feature_selector == "SFS" and fs_indices is not None:
-            fs_indices = list(train_set.indices)
-        test_set = Load_Dataset(
-            x_path=x_test_set_,
-            y_path=y_test_set_,
-            filters=fs_indices,
-            application=args.dataset,
-        )
+    # else:
+    #     train_set = Load_Dataset(
+    #         x_path=x_train_set_,
+    #         y_path=y_train_set_,
+    #         filters=fs_indices,
+    #         application=args.dataset,
+    #         normalize=False,
+    #     )
+    #     if args.feature_selector == "SFS" and fs_indices is not None:
+    #         fs_indices = list(train_set.indices)
+    #     test_set = Load_Dataset(
+    #         x_path=x_test_set_,
+    #         y_path=y_test_set_,
+    #         filters=fs_indices,
+    #         application=args.dataset,
+    #         normalize=False,
+    #     )
     return train_set, test_set
 
 

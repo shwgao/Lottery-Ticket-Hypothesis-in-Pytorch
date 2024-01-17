@@ -68,7 +68,7 @@ class DataContainer:
 
             Dij = np.linalg.norm(R[:, None, :] - R[None, :, :], axis=-1)
             adj_matrices.append(sp.csr_matrix(Dij <= self.cutoff))
-            adj_matrices[-1] -= sp.eye(n, dtype=np.bool)
+            adj_matrices[-1] -= sp.eye(n, dtype=np.bool_)
 
         # Entry x,y is edge x<-y (!)
         adj_matrix = self._bmat_fast(adj_matrices)

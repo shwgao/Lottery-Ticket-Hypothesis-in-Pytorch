@@ -155,8 +155,30 @@ class DimeNetPP(tf.keras.Model):
                               activation=activation, output_init=output_init))
 
         self.dense_layers = []
+        self.dense_layers.append(self.emb_block.dense_rbf)
+        self.dense_layers.append(self.emb_block.dense)
+        for block in self.output_blocks:
+            self.dense_layers.append(block.dense_rbf)
+            for layer in block.dense_layers:
+                self.dense_layers.append(layer)
+            self.dense_layers.append(block.dense_final)
         for block in self.int_blocks:
+            self.dense_layers.append(block.dense_rbf1)
+            self.dense_layers.append(block.dense_rbf2)
+            self.dense_layers.append(block.dense_sbf1)
+            self.dense_layers.append(block.dense_sbf2)
+            self.dense_layers.append(block.dense_ji)
+            self.dense_layers.append(block.dense_kj)
             self.dense_layers.append(block.down_projection)
+            self.dense_layers.append(block.up_projection)
+            self.dense_layers.append(block.final_before_skip)
+            for layer in block.layers_before_skip:
+                self.dense_layers.append(layer.dense_1)
+                self.dense_layers.append(layer.dense_2)
+            for layer in block.layers_after_skip:
+                self.dense_layers.append(layer.dense_1)
+                self.dense_layers.append(layer.dense_2)
+
 
     def calculate_interatomic_distances(self, R, idx_i, idx_j):
         Ri = tf.gather(R, idx_i)

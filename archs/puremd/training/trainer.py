@@ -18,7 +18,7 @@ class Trainer:
             self.learning_rate = tf.optimizers.schedules.ExponentialDecay(
                 learning_rate, decay_steps, decay_rate)
 
-        opt = tf.optimizers.Adam(learning_rate=self.learning_rate, amsgrad=True)
+        opt = tf.optimizers.legacy.Adam(learning_rate=self.learning_rate, amsgrad=True)
         self.optimizer = tfa.optimizers.MovingAverage(opt, average_decay=self.ema_decay)
 
         # Initialize backup variables
@@ -35,8 +35,12 @@ class Trainer:
         if self.max_grad_norm is not None:
             grads, _ = tf.clip_by_global_norm(grads, self.max_grad_norm, use_norm=global_norm)
 
-        # Freezing Pruned weights by making their gradients Zero
-        grads = [tf.multiply(grad, mask[i]) for i, grad in enumerate(grads)]  # fixme: check if this works
+        # Freezing Pruned weights by making their gradients Zero according to the name of the layer
+        for i in range(len(grads)):
+            if grads[i] is not None:
+                if 'prune' in self.model.trainable_weights[i].name:
+                    grads[i] = tf.multiply(grads[i], mask[i])
+        # grads = [tf.multiply(grad, mask[i]) for i, grad in enumerate(grads)]  # fixme: check if this works
 
         self.optimizer.apply_gradients(zip(grads, self.model.trainable_weights))
 
@@ -77,7 +81,7 @@ class Trainer:
         mean_mae = tf.reduce_mean(mae)
         loss = mean_mae
 
-        relative_error = tf.abs(targets - preds) / (targets + 1e-8)
+        relative_error = tf.math.reduce_mean(tf.abs(targets - preds) / (targets + 1e-8))
 
         nsamples = tf.shape(preds)[0]
 

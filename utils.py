@@ -6,6 +6,10 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import copy
 
+from load_dataset import load_data
+global fc1, LeNet5, AlexNet, vgg, resnet, densenet, dimenet
+
+
 #ANCHOR Print table of zeros and non-zeros count
 def print_nonzeros(model):
     nonzero = total = 0
@@ -20,27 +24,9 @@ def print_nonzeros(model):
     return (round((nonzero/total)*100,1))
 
 
-import tensorflow as tf
-def print_nonzeros_tf(model):
-    nonzero = total = 0
-    for layer in model.layers:
-        if isinstance(layer, tf.keras.layers.Dense) or \
-           isinstance(layer, tf.keras.layers.Conv2D) or \
-           isinstance(layer, tf.keras.layers.Conv1D):
-            weights = layer.get_weights()[0]
-            tensor = weights.numpy()
-            nz_count = np.count_nonzero(tensor)
-            total_params = np.prod(tensor.shape)
-            nonzero += nz_count
-            total += total_params
-            print(f'{layer.name:20} | nonzeros = {nz_count:7} / {total_params:7} ({100 * nz_count / total_params:6.2f}%) | total_pruned = {total_params - nz_count :7} | shape = {tensor.shape}')
-    print(f'alive: {nonzero}, pruned : {total - nonzero}, total: {total}, Compression rate : {total/nonzero:10.2f}x  ({100 * (total-nonzero) / total:6.2f}% pruned)')
-    return (round((nonzero/total)*100,1))
-
-
 def original_initialization(mask_temp, initial_state_dict):
     global model
-    
+
     step = 0
     for name, param in model.named_parameters(): 
         if "weight" in name: 
@@ -108,3 +94,84 @@ def plot_train_test_stats(stats,
         plt.savefig(savefig, bbox_inches='tight')
     else:
         plt.show()
+
+
+def get_essentials(args):
+    import torchvision.transforms as transforms
+    import torchvision.datasets as datasets
+    # Data Loader
+    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
+    if args.dataset == "mnist":
+        traindataset = datasets.MNIST('../data', train=True, download=True, transform=transform)
+        testdataset = datasets.MNIST('../data', train=False, transform=transform)
+        from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
+
+    elif args.dataset == "cifar10":
+        traindataset = datasets.CIFAR10('../data', train=True, download=True, transform=transform)
+        testdataset = datasets.CIFAR10('../data', train=False, transform=transform)
+        from archs.cifar10 import AlexNet, LeNet5, fc1, vgg, resnet, densenet
+
+    elif args.dataset == "fashionmnist":
+        traindataset = datasets.FashionMNIST('../data', train=True, download=True, transform=transform)
+        testdataset = datasets.FashionMNIST('../data', train=False, transform=transform)
+        from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
+
+    elif args.dataset == "cifar100":
+        traindataset = datasets.CIFAR100('../data', train=True, download=True, transform=transform)
+        testdataset = datasets.CIFAR100('../data', train=False, transform=transform)
+        from archs.cifar100 import AlexNet, fc1, LeNet5, vgg, resnet
+
+        # If you want to add extra datasets paste here
+    elif args.dataset == "CFD":
+        traindataset, testdataset = load_data(args)
+        from archs.CFD import fc1
+
+    elif args.dataset == "fluidanimation":
+        traindataset, testdataset = load_data(args)
+        from archs.fluidanimation import fc1
+
+    elif args.dataset == "puremd":
+        traindataset, testdataset = load_data(args)
+        from archs.puremd import fc1
+
+    elif args.dataset == "cosmoflow":
+        traindataset, testdataset = load_data(args)
+        from archs.cosmoflow import fc1
+
+    elif args.dataset == "dimenet":
+        traindataset, testdataset = load_data(args)
+
+    else:
+        print("\nWrong Dataset choice \n")
+        exit()
+
+    train_loader = torch.utils.data.DataLoader(traindataset, batch_size=args.batch_size, shuffle=True, num_workers=0,
+                                               drop_last=False)
+    # train_loader = cycle(train_loader)
+    # test_loader = torch.utils.data.DataLoader(testdataset, batch_size=args.batch_size, shuffle=False, num_workers=0,
+    #                                           drop_last=True)
+    test_loader = torch.utils.data.DataLoader(testdataset, batch_size=len(testdataset), shuffle=False, num_workers=0,
+                                              drop_last=True)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if args.arch_type == "fc1":
+        if args.dataset == "dimenet":
+            from archs.puremd_torch import dimenet
+            model = dimenet.DimenetPP().to(device)
+        else:
+            model = fc1.fc1().to(device)
+    elif args.arch_type == "lenet5":
+        model = LeNet5.LeNet5().to(device)
+    elif args.arch_type == "alexnet":
+        model = AlexNet.AlexNet().to(device)
+    elif args.arch_type == "vgg16":
+        model = vgg.vgg16().to(device)
+    elif args.arch_type == "resnet18":
+        model = resnet.resnet18().to(device)
+    elif args.arch_type == "densenet121":
+        model = densenet.densenet121().to(device)
+    else:
+        print("\nWrong Model choice\n")
+        exit()
+
+    return train_loader, test_loader, model

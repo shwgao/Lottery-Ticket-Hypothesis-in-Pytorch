@@ -76,9 +76,6 @@ def cal_performance(model_path, input_shape, classfication=False):
     ratio = print_nonzeros(model)
     print("Sparsity in model: {:.2f}%".format(ratio))
 
-    for name, param in model.named_parameters():
-        print(name, param.shape)
-
     flops, macs, params = calculate_flops(model=model,
                                           input_shape=input_shape,
                                           output_as_string=True,
@@ -115,7 +112,7 @@ def cal_performance(model_path, input_shape, classfication=False):
                 test_loss = r2_loss(output, target).item()
                 relative_error = torch.mean(torch.abs(output - target) / torch.abs(target + 1e-8))
                 relative_errors += relative_error.item()
-            test_losses += test_loss 
+            test_losses += test_loss
 
     average_time = mean(times)
     average_test_loss = test_losses / len(test_loader)
@@ -155,16 +152,46 @@ def read_results(root):
     return flops, times, test_losses, relative_errors, pruned_ratios
 
 
-def inferance(roots, args):
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lr", default=1.2e-3, type=float, help="Learning rate")
+    parser.add_argument("--batch_size", default=64, type=int)
+    parser.add_argument("--start_iter", default=0, type=int)
+    parser.add_argument("--end_iter", default=50, type=int)  # 100
+    parser.add_argument("--print_freq", default=1, type=int)
+    parser.add_argument("--valid_freq", default=1, type=int)
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--prune_type", default="lt", type=str, help="lt | reinit")
+    parser.add_argument("--gpu", default="0", type=str)
+    parser.add_argument("--dataset", default="puremd", type=str,
+                        help="mnist | cifar10 | fashionmnist | cifar100 | "
+                             "CFD | fluidanimation | puremd | cosmoflow | dimenet")
+    parser.add_argument("--arch_type", default="fc1", type=str,
+                        help="fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121")
+    parser.add_argument("--prune_percent", default=20, type=int, help="Pruning percent")
+    parser.add_argument("--prune_iterations", default=10, type=int, help="Pruning iterations count")
+    parser.add_argument("--device", default="cuda", type=str, help="cuda | cpu")
+
+    args = parser.parse_args()
+
+    root = './saves/puremd-fs/01-10-13'
+    # root = './saves/fc1/puremd'
+    # root = './saves/CFD/01-08-20/'
+    # root = './saves/CFD-fs/01-09-18'
+    # root = './saves/cosmoflow/01-08-20'
+    roots = [os.path.join(root, x) for x in os.listdir(root) if 'model_lt' in x]
+    # sort the roots
+    roots.sort(key=lambda x: int(x.split('_')[0].split('/')[-1]))
     flops = []
     average_times = []
     average_test_losses = []
     average_relative_errors = []
     pruned_ratios = []
+    roots = ['saves/puremd-fs/01-10-13/9_model_lt.pth.tar']
     for path in roots:
         print(path)
-        flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 4, 128, 128, 128))
-        # flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 15))
+        # flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 4, 128, 128, 128))
+        flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 9))
         # flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 28, 28), classfication=True)
 
         flops.append(flops_)
@@ -182,59 +209,10 @@ def inferance(roots, args):
         f.write(f'Pruned ratio: {pruned_ratios}\n')
 
     # plot the results in a plot
-    # flops = np.arange(0, len(flops))
+    flops = np.arange(0, len(flops))
     plot_results(flops, average_times, 'Time', title='Time cost', savefig=f'{root}/time-{args.dataset}.png')
     plot_results(flops, average_test_losses, 'Loss', title='Test loss', savefig=f'{root}/loss-{args.dataset}.png')
-    plot_results(flops, average_relative_errors, 'Relative Error', title='Relative error',
-                 savefig=f'{root}/relative_error-{args.dataset}.png')
+    plot_results(flops, average_relative_errors, 'Relative Error', title='Relative error', savefig=f'{root}/relative_error-{args.dataset}.png')
 
-
-def read_draw(roots):
-    for path in roots:
-        result_path = os.path.join(path, 'results.txt')
-        flops, average_times, average_test_losses, average_relative_errors, pruned_ratios = read_results(path)
-
-        # plot the results in a plot
-        # flops = np.arange(0, len(flops))
-        plot_results(flops, average_times, 'Time', title='Time cost', savefig=f'{root}/time-{args.dataset}.png')
-        plot_results(flops, average_test_losses, 'Loss', title='Test loss', savefig=f'{root}/loss-{args.dataset}.png')
-        plot_results(flops, average_relative_errors, 'Relative Error', title='Relative error',
-                     savefig=f'{root}/relative_error-{args.dataset}.png')
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--lr", default=1.2e-3, type=float, help="Learning rate")
-    parser.add_argument("--batch_size", default=64, type=int)
-    parser.add_argument("--start_iter", default=0, type=int)
-    parser.add_argument("--end_iter", default=50, type=int)  # 100
-    parser.add_argument("--print_freq", default=1, type=int)
-    parser.add_argument("--valid_freq", default=1, type=int)
-    parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--prune_type", default="lt", type=str, help="lt | reinit")
-    parser.add_argument("--gpu", default="0", type=str)
-    parser.add_argument("--dataset", default="cosmoflow", type=str,
-                        help="mnist | cifar10 | fashionmnist | cifar100 | "
-                             "CFD | fluidanimation | puremd | cosmoflow | dimenet")
-    parser.add_argument("--arch_type", default="fc1", type=str,
-                        help="fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121")
-    parser.add_argument("--prune_percent", default=20, type=int, help="Pruning percent")
-    parser.add_argument("--prune_iterations", default=10, type=int, help="Pruning iterations count")
-    parser.add_argument("--device", default="cuda", type=str, help="cuda | cpu")
-
-    args = parser.parse_args()
-
-    # root = './saves/puremd/01-11-17'
-    # root = './saves/fc1/puremd'
-    # root = './saves/fluidanimation/01-12-16'
-    # root = './saves/CFD-fs/01-09-18'
-    root = './saves/cosmoflow/01-08-20'
-    roots = [os.path.join(root, x) for x in os.listdir(root) if 'model_lt' in x]
-    # sort the roots
-    roots.sort(key=lambda x: int(x.split('_')[0].split('/')[-1]))
-
-    inferance(roots, args)
-    # roots = ['./saves/puremd/01-10-11/']
-    # read_draw(roots)
 
 

@@ -400,7 +400,7 @@ if __name__=="__main__":
     parser.add_argument("--lr",default= 1.2e-3, type=float, help="Learning rate")
     parser.add_argument("--batch_size", default=60, type=int)
     parser.add_argument("--start_iter", default=0, type=int)
-    parser.add_argument("--end_iter", default=100, type=int)
+    parser.add_argument("--end_iter", default=50, type=int)
     parser.add_argument("--print_freq", default=1, type=int)
     parser.add_argument("--valid_freq", default=1, type=int)
     parser.add_argument("--resume", action="store_true")
@@ -408,8 +408,8 @@ if __name__=="__main__":
     parser.add_argument("--gpu", default="3", type=str)
     parser.add_argument("--dataset", default="mnist", type=str, help="mnist | cifar10 | fashionmnist | cifar100")
     parser.add_argument("--arch_type", default="fc1", type=str, help="fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121")
-    parser.add_argument("--prune_percent", default=10, type=int, help="Pruning percent")
-    parser.add_argument("--prune_iterations", default=35, type=int, help="Pruning iterations count")
+    parser.add_argument("--prune_percent", default=20, type=int, help="Pruning percent")
+    parser.add_argument("--prune_iterations", default=10, type=int, help="Pruning iterations count")
 
     
     args = parser.parse_args()
