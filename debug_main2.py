@@ -39,8 +39,10 @@ now_time = datetime.datetime.now().strftime("%m-%d-%H")
 sns.set_style('darkgrid')
 debugging = False
 # criterion = nn.CrossEntropyLoss() # Default was F.nll_loss
-criterion_train = nn.MSELoss()
-criterion_test = nn.MSELoss()
+# criterion_train = nn.MSELoss()
+# criterion_test = nn.MSELoss()
+criterion_train = nn.CrossEntropyLoss()
+criterion_test = nn.CrossEntropyLoss()
 # if args.dataset == 'dimenet':
 #     criterion = nn.MSELoss
 
@@ -151,7 +153,7 @@ def main(args, ITE=0):
             if iter_ % args.print_freq == 0:
                 pbar.set_description(
                     f'Train Epoch: {iter_}/{args.end_iter} Train Loss: {loss:.6f} test loss: {test_loss:.8f} '
-                    f'test r2 loss: {r2_loss}  test r2 scores: {r2} beast mean r2: {best_mean_r2_score}')
+                    f'test r2 loss: {r2_loss:.6f}  test r2 scores: {r2} beast mean r2: {best_mean_r2_score:.4f}')
 
         best_r2_scores[_ite] = np.mean(r2)
 
@@ -185,7 +187,6 @@ def train(model, train_loader, optimizer, criterion):
         output = model(data)
         train_loss = criterion(output, target)
         train_loss.backward()
-        total_loss += train_loss.item() / len(train_loader)
 
         # Freezing Pruned weights by making their gradients Zero
         for name, p in model.named_parameters():
@@ -195,6 +196,7 @@ def train(model, train_loader, optimizer, criterion):
                 grad_tensor = np.where(tensor < EPS, 0, grad_tensor)
                 p.grad.data = torch.from_numpy(grad_tensor).to(device)
         optimizer.step()
+        total_loss += train_loss.item() / len(train_loader)
         if debugging:
             print(f'train loss: {train_loss.item()}')
     mean_loss = total_loss
@@ -209,6 +211,7 @@ def test(model, test_loader, criterion):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
     test_losses = 0
+    r2 = []
 
     with torch.no_grad():
         for i, (datas) in enumerate(test_loader):
@@ -221,11 +224,15 @@ def test(model, test_loader, criterion):
                 data, target = data.to(device), target.to(device)
             output = model(data)
             test_loss = criterion(output, target).item()
-            r2_l = r2_loss(output, target).item()
-            r2 = r2_score(target.cpu(), output.cpu(), multioutput='raw_values')
+            if isinstance(criterion, nn.CrossEntropyLoss):
+                r2_l = test_loss
+                r2 += [utils.accuracy(output, target, topk=(1,))[0].item()]
+            else:
+                r2_l = r2_loss(output, target).item()
+                r2 = r2_score(target.cpu(), output.cpu(), multioutput='raw_values')
             test_losses += test_loss
             if debugging:
-                print(f'test loss: {test_loss}, r2 loss: {r2_l}, r2 score: {r2}')
+                print(f'test loss: {test_loss}, Quality loss: {r2_l}, Quality matrix: {r2}.(Quality means r2 or acc ')
         test_losses /= len(test_loader)
         if debugging:
             print(f'mean: test loss: {test_losses}, r2 score: {r2}, len: {len(test_loader)}')
@@ -263,7 +270,8 @@ def prune_by_percentile(percent, resample=False, reinit=False, **kwargs):
 
         # We do not prune bias term
         if 'weight' in name:
-            tensor = param.data.cpu().numpy()
+            params = param.data.cpu().numpy()
+            tensor = np.sum(np.abs(params), axis=0)
             alive = tensor[np.nonzero(tensor)]  # flattened array of nonzero values
             percentile_value = np.percentile(abs(alive), percent)
 
@@ -272,7 +280,9 @@ def prune_by_percentile(percent, resample=False, reinit=False, **kwargs):
             new_mask = np.where(abs(tensor) < percentile_value, 0, mask[step])
 
             # Apply new weight and mask
-            param.data = torch.from_numpy(tensor * new_mask).to(weight_dev)
+            new_mask_mul = np.expand_dims(new_mask, axis=0).astype(np.int32)
+            new_mask_mul = np.repeat(new_mask_mul, repeats=params.shape[0], axis=0)
+            param.data = torch.from_numpy(params * new_mask_mul).to(dtype=torch.float32, device=weight_dev)
             mask[step] = new_mask
             step += 1
     step = 0
@@ -291,7 +301,7 @@ def make_mask(model):
     for name, param in model.named_parameters():
         if 'weight' in name:
             tensor = param.data.cpu().numpy()
-            mask[step] = np.ones_like(tensor)
+            mask[step] = np.ones(tensor.shape[1])
             step = step + 1
     step = 0
 
@@ -303,7 +313,10 @@ def original_initialization(mask_temp, initial_state_dict):
     for name, param in model.named_parameters():
         if "weight" in name:
             weight_dev = param.device
-            param.data = torch.from_numpy(mask_temp[step] * initial_state_dict[name].cpu().numpy()).to(weight_dev)
+            # Apply new weight and mask
+            new_mask_mul = np.expand_dims(mask_temp[step], axis=0).astype(np.int32)
+            new_mask_mul = np.repeat(new_mask_mul, repeats=param.shape[0], axis=0)
+            param.data = torch.from_numpy(new_mask_mul * initial_state_dict[name].cpu().numpy()).to(dtype=torch.float32, device=weight_dev)
             step = step + 1
         if "bias" in name:
             param.data = initial_state_dict[name]
@@ -384,22 +397,22 @@ if __name__ == "__main__":
 
     # Arguement Parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("--lr", default=1.e-3, type=float, help="Learning rate")
-    parser.add_argument("--batch_size", default=3000, type=int)
+    parser.add_argument("--lr", default=1e-3, type=float, help="Learning rate")
+    parser.add_argument("--batch_size", default=200, type=int)
     parser.add_argument("--start_iter", default=0, type=int)
     parser.add_argument("--end_iter", default=100, type=int)  # 100
     parser.add_argument("--print_freq", default=1, type=int)
     parser.add_argument("--valid_freq", default=1, type=int)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--prune_type", default="lt", type=str, help="lt | reinit")
-    parser.add_argument("--gpu", default="1", type=str)
-    parser.add_argument("--dataset", default="cosmoflow", type=str,
+    parser.add_argument("--gpu", default="0", type=str)
+    parser.add_argument("--dataset", default="mnist", type=str,
                         help="mnist | cifar10 | fashionmnist | cifar100 | "
                              "CFD | fluidanimation | puremd | cosmoflow | dimenet")
     parser.add_argument("--arch_type", default="fc1", type=str,
                         help="fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121")
-    parser.add_argument("--prune_percent", default=20, type=int, help="Pruning percent")
-    parser.add_argument("--prune_iterations", default=10, type=int, help="Pruning iterations count")
+    parser.add_argument("--prune_percent", default=10, type=int, help="Pruning percent")
+    parser.add_argument("--prune_iterations", default=20, type=int, help="Pruning iterations count")
     parser.add_argument("--device", default="cuda", type=str, help="cuda | cpu")
 
     args = parser.parse_args()
@@ -412,16 +425,17 @@ if __name__ == "__main__":
     if args.dataset == 'cosmoflow':
         args.batch_size = 64
         args.lr = 0.0002
-        criterion_test = nn.MSELoss()
-        criterion_train = nn.MSELoss()
+        criterion_test = log_cosh_loss
+        criterion_train = log_cosh_loss
     elif args.dataset == 'dimenet':
         args.batch_size = 1
 
     # for debugging
-    debugging = True
+    debugging = False
     if debugging:
         args.end_iter = 3
 
     # Looping Entire process
     # for i in range(0, 5):
     main(args, ITE=1)
+

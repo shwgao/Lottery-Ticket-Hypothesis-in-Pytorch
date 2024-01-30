@@ -39,8 +39,10 @@ now_time = datetime.datetime.now().strftime("%m-%d-%H")
 sns.set_style('darkgrid')
 debugging = False
 # criterion = nn.CrossEntropyLoss() # Default was F.nll_loss
-criterion_train = nn.MSELoss()
-criterion_test = nn.MSELoss()
+# criterion_train = nn.MSELoss()
+# criterion_test = nn.MSELoss()
+criterion_train = nn.CrossEntropyLoss()
+criterion_test = nn.CrossEntropyLoss()
 # if args.dataset == 'dimenet':
 #     criterion = nn.MSELoss
 
@@ -209,6 +211,7 @@ def test(model, test_loader, criterion):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
     test_losses = 0
+    r2 = []
 
     with torch.no_grad():
         for i, (datas) in enumerate(test_loader):
@@ -221,11 +224,15 @@ def test(model, test_loader, criterion):
                 data, target = data.to(device), target.to(device)
             output = model(data)
             test_loss = criterion(output, target).item()
-            r2_l = r2_loss(output, target).item()
-            r2 = r2_score(target.cpu(), output.cpu(), multioutput='raw_values')
+            if isinstance(criterion, nn.CrossEntropyLoss):
+                r2_l = test_loss
+                r2 += [utils.accuracy(output, target, topk=(1,))[0].item()]
+            else:
+                r2_l = r2_loss(output, target).item()
+                r2 = r2_score(target.cpu(), output.cpu(), multioutput='raw_values')
             test_losses += test_loss
             if debugging:
-                print(f'test loss: {test_loss}, r2 loss: {r2_l}, r2 score: {r2}')
+                print(f'test loss: {test_loss}, Quality loss: {r2_l}, Quality matrix: {r2}.(Quality means r2 or acc ')
         test_losses /= len(test_loader)
         if debugging:
             print(f'mean: test loss: {test_losses}, r2 score: {r2}, len: {len(test_loader)}')
@@ -385,7 +392,7 @@ if __name__ == "__main__":
     # Arguement Parser
     parser = argparse.ArgumentParser()
     parser.add_argument("--lr", default=1e-3, type=float, help="Learning rate")
-    parser.add_argument("--batch_size", default=3000, type=int)
+    parser.add_argument("--batch_size", default=200, type=int)
     parser.add_argument("--start_iter", default=0, type=int)
     parser.add_argument("--end_iter", default=100, type=int)  # 100
     parser.add_argument("--print_freq", default=1, type=int)
@@ -393,13 +400,13 @@ if __name__ == "__main__":
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--prune_type", default="lt", type=str, help="lt | reinit")
     parser.add_argument("--gpu", default="2", type=str)
-    parser.add_argument("--dataset", default="puremd", type=str,
+    parser.add_argument("--dataset", default="cifar100", type=str,
                         help="mnist | cifar10 | fashionmnist | cifar100 | "
                              "CFD | fluidanimation | puremd | cosmoflow | dimenet")
-    parser.add_argument("--arch_type", default="fc1", type=str,
+    parser.add_argument("--arch_type", default="resnet18", type=str,
                         help="fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121")
-    parser.add_argument("--prune_percent", default=20, type=int, help="Pruning percent")
-    parser.add_argument("--prune_iterations", default=10, type=int, help="Pruning iterations count")
+    parser.add_argument("--prune_percent", default=10, type=int, help="Pruning percent")
+    parser.add_argument("--prune_iterations", default=35, type=int, help="Pruning iterations count")
     parser.add_argument("--device", default="cuda", type=str, help="cuda | cpu")
 
     args = parser.parse_args()
