@@ -37,7 +37,10 @@ def load_datas(args):
     if args.dataset == "mnist":
         traindataset = datasets.MNIST('../data', train=True, download=True, transform=transform)
         testdataset = datasets.MNIST('../data', train=False, transform=transform)
-        from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
+
+    elif args.dataset == "cifar10":
+        traindataset = datasets.CIFAR10('../data', train=True, download=True, transform=transform)
+        testdataset = datasets.CIFAR10('../data', train=False, transform=transform)
 
     elif "CFD" in args.dataset:
         args.dataset = 'CFD'
@@ -122,7 +125,7 @@ def cal_performance(model_path, input_shape, classfication=False):
     average_relative_error = relative_errors / len(test_loader)
     if classfication:
         accuracy = 100. * correct / len(test_loader.dataset)
-        average_relative_error = accuracy
+        average_relative_error = accuracy.item()
 
     print("Time cost: %s" % average_time)
     print("Test loss: %s" % average_test_loss)
@@ -130,11 +133,25 @@ def cal_performance(model_path, input_shape, classfication=False):
     return flops, average_time, average_test_loss, average_relative_error, 1-ratio/100
 
 
-def plot_results(x, y, y_label, x_label='Pruning Level', title=None, savefig=None):
-    plt.figure()
-    plt.plot(x, y, '-o', linewidth=2)
+def plot_results(x, y, y_label, x_label='Pruning Level', title=None, savefig=None, td=False):
+    colors = ['skyblue', 'orange', 'green', 'red', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan', 'magenta']
+    if td:
+        plt.figure()
+        for i in range(len(y)):
+            #plt.plot(x[i], y[i], '-o', linewidth=2, color=colors[i], label=y_label[i])
+            # plot the fitting line of x and y
+            z = np.polyfit(x[i], y[i], 20)
+            p = np.poly1d(z)
+            plt.plot(x[i], p(x[i]), '-o', linewidth=2, color=colors[i], label=y_label[i])
+        plt.legend()
+        plt.xlim(-0.05, 0.8)
+    else:
+        plt.figure()
+        plt.plot(x, y, '-o', linewidth=2)
+        plt.xlabel(x_label)
+        plt.ylabel(y_label)
+
     plt.xlabel(x_label)
-    plt.ylabel(y_label)
     plt.title(title)
     plt.savefig(savefig)
 
@@ -155,6 +172,16 @@ def read_results(root):
     return flops, times, test_losses, relative_errors, pruned_ratios
 
 
+def read_ML_results():
+    with open('/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/logs/minist/bz200-N884018-wd0.0005-regTrue-31-11-26-la-0.1-lr0.001-temp0.67-noema/results.txt', 'r') as f:
+        lines = f.readlines()
+        pruned_ratios = lines[0].split('[')[1].split(']')[0].split(',')
+        pruned_ratios = [float(x.strip()) for x in pruned_ratios]
+        quality = lines[1].split('[')[1].split(']')[0].split(',')
+        quality = [float(x.strip()) for x in quality]
+    return pruned_ratios, quality
+
+
 def inferance(roots, args):
     flops = []
     average_times = []
@@ -163,9 +190,9 @@ def inferance(roots, args):
     pruned_ratios = []
     for path in roots:
         print(path)
-        flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 4, 128, 128, 128))
+        # flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 4, 128, 128, 128))
         # flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 15))
-        # flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 28, 28), classfication=True)
+        flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 3, 32, 32), classfication=True)
 
         flops.append(flops_)
         average_times.append(average_time)
@@ -185,21 +212,29 @@ def inferance(roots, args):
     # flops = np.arange(0, len(flops))
     plot_results(flops, average_times, 'Time', title='Time cost', savefig=f'{root}/time-{args.dataset}.png')
     plot_results(flops, average_test_losses, 'Loss', title='Test loss', savefig=f'{root}/loss-{args.dataset}.png')
-    plot_results(flops, average_relative_errors, 'Relative Error', title='Relative error',
-                 savefig=f'{root}/relative_error-{args.dataset}.png')
+    plot_results(flops, [average_relative_errors, pruned_ratios], ['Relative Error', 'pruned_ratios'],
+                 title='Relative error', savefig=f'{root}/relative_error-{args.dataset}.png', td=True)
 
 
 def read_draw(roots):
     for path in roots:
-        result_path = os.path.join(path, 'results.txt')
         flops, average_times, average_test_losses, average_relative_errors, pruned_ratios = read_results(path)
 
         # plot the results in a plot
         # flops = np.arange(0, len(flops))
-        plot_results(flops, average_times, 'Time', title='Time cost', savefig=f'{root}/time-{args.dataset}.png')
-        plot_results(flops, average_test_losses, 'Loss', title='Test loss', savefig=f'{root}/loss-{args.dataset}.png')
-        plot_results(flops, average_relative_errors, 'Relative Error', title='Relative error',
-                     savefig=f'{root}/relative_error-{args.dataset}.png')
+        plot_results(pruned_ratios, average_times, 'Time', title='Time cost', savefig=f'{root}/time-{args.dataset}.png')
+        plot_results(pruned_ratios, average_test_losses, 'Loss', title='Test loss', savefig=f'{root}/loss-{args.dataset}.png')
+        plot_results(pruned_ratios, average_relative_errors, 'Relative Error / Acc', title='Relative error / Acc',
+                     savefig=f'{root}/relative_error or Acc-{args.dataset}.png')
+
+
+def draw_compare_acc(root1, root2):
+    _, _, _, average_relative_errors1, pruned_ratios1 = read_results(root1[0])
+    _, _, _, average_relative_errors2, pruned_ratios2 = read_results(root2[0])
+    pruned_ratios3, quality = read_ML_results()
+    plot_results([pruned_ratios1, pruned_ratios2, pruned_ratios3], [average_relative_errors1, average_relative_errors2, quality],
+                 y_label=['prune_weights', 'prune_neuron', 'L0 prune'], title='Compare Acc',
+                 savefig=f'{root2[0]}/Compare Acc.png', td=True)
 
 
 if __name__ == "__main__":
@@ -213,10 +248,10 @@ if __name__ == "__main__":
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--prune_type", default="lt", type=str, help="lt | reinit")
     parser.add_argument("--gpu", default="0", type=str)
-    parser.add_argument("--dataset", default="cosmoflow", type=str,
+    parser.add_argument("--dataset", default="cifar10", type=str,
                         help="mnist | cifar10 | fashionmnist | cifar100 | "
                              "CFD | fluidanimation | puremd | cosmoflow | dimenet")
-    parser.add_argument("--arch_type", default="fc1", type=str,
+    parser.add_argument("--arch_type", default="lenet5", type=str,
                         help="fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121")
     parser.add_argument("--prune_percent", default=20, type=int, help="Pruning percent")
     parser.add_argument("--prune_iterations", default=10, type=int, help="Pruning iterations count")
@@ -228,13 +263,12 @@ if __name__ == "__main__":
     # root = './saves/fc1/puremd'
     # root = './saves/fluidanimation/01-12-16'
     # root = './saves/CFD-fs/01-09-18'
-    root = './saves/cosmoflow/01-08-20'
+    root = './saves/cifar10/01-30-17-prune-neuron'
     roots = [os.path.join(root, x) for x in os.listdir(root) if 'model_lt' in x]
     # sort the roots
     roots.sort(key=lambda x: int(x.split('_')[0].split('/')[-1]))
 
-    inferance(roots, args)
-    # roots = ['./saves/puremd/01-10-11/']
-    # read_draw(roots)
-
-
+    # inferance(roots, args)
+    # read_draw([root])
+    # draw_compare_acc(['./saves/cifar10/01-30-15'], ['./saves/cifar10/01-30-17-prune-neuron'])
+    draw_compare_acc(['./saves/mnist/01-29-10'], ['./saves/mnist/01-29-13'])

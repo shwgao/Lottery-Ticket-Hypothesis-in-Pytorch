@@ -33,7 +33,7 @@ def log_cosh_loss(output, target):
     return torch.mean(torch.log(torch.cosh(output - target)))
 
 
-now_time = datetime.datetime.now().strftime("%m-%d-%H")
+now_time = datetime.datetime.now().strftime("%m-%d-%H")+'-prune-neuron'
 
 # Plotting Style
 sns.set_style('darkgrid')
@@ -271,7 +271,10 @@ def prune_by_percentile(percent, resample=False, reinit=False, **kwargs):
         # We do not prune bias term
         if 'weight' in name:
             params = param.data.cpu().numpy()
-            tensor = np.sum(np.abs(params), axis=0)
+            if len(params.shape) <= 2:
+                tensor = np.sum(np.abs(params), axis=0)
+            else:
+                tensor = np.sum(np.abs(params), axis=(0, 2, 3))
             alive = tensor[np.nonzero(tensor)]  # flattened array of nonzero values
             percentile_value = np.percentile(abs(alive), percent)
 
@@ -280,8 +283,14 @@ def prune_by_percentile(percent, resample=False, reinit=False, **kwargs):
             new_mask = np.where(abs(tensor) < percentile_value, 0, mask[step])
 
             # Apply new weight and mask
-            new_mask_mul = np.expand_dims(new_mask, axis=0).astype(np.int32)
-            new_mask_mul = np.repeat(new_mask_mul, repeats=params.shape[0], axis=0)
+            if len(params.shape) <= 2:
+                new_mask_mul = np.expand_dims(new_mask, axis=0).astype(np.int32)
+                new_mask_mul = np.repeat(new_mask_mul, repeats=params.shape[0], axis=0)
+            else:
+                new_mask_mul = np.expand_dims(new_mask, axis=(0, 2, 3)).astype(np.int32)
+                new_mask_mul = np.repeat(new_mask_mul, repeats=params.shape[0], axis=0)
+                new_mask_mul = np.repeat(new_mask_mul, repeats=params.shape[2], axis=2)
+                new_mask_mul = np.repeat(new_mask_mul, repeats=params.shape[3], axis=3)
             param.data = torch.from_numpy(params * new_mask_mul).to(dtype=torch.float32, device=weight_dev)
             mask[step] = new_mask
             step += 1
@@ -314,8 +323,15 @@ def original_initialization(mask_temp, initial_state_dict):
         if "weight" in name:
             weight_dev = param.device
             # Apply new weight and mask
-            new_mask_mul = np.expand_dims(mask_temp[step], axis=0).astype(np.int32)
-            new_mask_mul = np.repeat(new_mask_mul, repeats=param.shape[0], axis=0)
+            new_mask = mask_temp[step]
+            if len(param.shape) <= 2:
+                new_mask_mul = np.expand_dims(new_mask, axis=0).astype(np.int32)
+                new_mask_mul = np.repeat(new_mask_mul, repeats=param.shape[0], axis=0)
+            else:
+                new_mask_mul = np.expand_dims(new_mask, axis=(0, 2, 3)).astype(np.int32)
+                new_mask_mul = np.repeat(new_mask_mul, repeats=param.shape[0], axis=0)
+                new_mask_mul = np.repeat(new_mask_mul, repeats=param.shape[2], axis=2)
+                new_mask_mul = np.repeat(new_mask_mul, repeats=param.shape[3], axis=3)
             param.data = torch.from_numpy(new_mask_mul * initial_state_dict[name].cpu().numpy()).to(dtype=torch.float32, device=weight_dev)
             step = step + 1
         if "bias" in name:
@@ -406,13 +422,13 @@ if __name__ == "__main__":
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--prune_type", default="lt", type=str, help="lt | reinit")
     parser.add_argument("--gpu", default="0", type=str)
-    parser.add_argument("--dataset", default="mnist", type=str,
+    parser.add_argument("--dataset", default="cifar10", type=str,
                         help="mnist | cifar10 | fashionmnist | cifar100 | "
                              "CFD | fluidanimation | puremd | cosmoflow | dimenet")
-    parser.add_argument("--arch_type", default="fc1", type=str,
+    parser.add_argument("--arch_type", default="lenet5", type=str,
                         help="fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121")
     parser.add_argument("--prune_percent", default=10, type=int, help="Pruning percent")
-    parser.add_argument("--prune_iterations", default=20, type=int, help="Pruning iterations count")
+    parser.add_argument("--prune_iterations", default=35, type=int, help="Pruning iterations count")
     parser.add_argument("--device", default="cuda", type=str, help="cuda | cpu")
 
     args = parser.parse_args()

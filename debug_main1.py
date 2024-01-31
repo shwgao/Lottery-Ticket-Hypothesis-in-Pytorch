@@ -33,7 +33,7 @@ def log_cosh_loss(output, target):
     return torch.mean(torch.log(torch.cosh(output - target)))
 
 
-now_time = datetime.datetime.now().strftime("%m-%d-%H")
+now_time = datetime.datetime.now().strftime("%m-%d-%H")+'-prune-weights'
 
 # Plotting Style
 sns.set_style('darkgrid')
@@ -399,11 +399,11 @@ if __name__ == "__main__":
     parser.add_argument("--valid_freq", default=1, type=int)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--prune_type", default="lt", type=str, help="lt | reinit")
-    parser.add_argument("--gpu", default="2", type=str)
-    parser.add_argument("--dataset", default="cifar100", type=str,
+    parser.add_argument("--gpu", default="1", type=str)
+    parser.add_argument("--dataset", default="cifar10", type=str,
                         help="mnist | cifar10 | fashionmnist | cifar100 | "
                              "CFD | fluidanimation | puremd | cosmoflow | dimenet")
-    parser.add_argument("--arch_type", default="resnet18", type=str,
+    parser.add_argument("--arch_type", default="lenet5", type=str,
                         help="fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121")
     parser.add_argument("--prune_percent", default=10, type=int, help="Pruning percent")
     parser.add_argument("--prune_iterations", default=35, type=int, help="Pruning iterations count")
