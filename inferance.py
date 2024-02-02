@@ -144,7 +144,7 @@ def plot_results(x, y, y_label, x_label='Pruning Level', title=None, savefig=Non
             p = np.poly1d(z)
             plt.plot(x[i], p(x[i]), '-o', linewidth=2, color=colors[i], label=y_label[i])
         plt.legend()
-        plt.xlim(-0.05, 0.8)
+        plt.xlim(-0.05, 1)
     else:
         plt.figure()
         plt.plot(x, y, '-o', linewidth=2)
@@ -173,7 +173,7 @@ def read_results(root):
 
 
 def read_ML_results():
-    with open('/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/logs/minist/bz200-N884018-wd0.0005-regTrue-31-11-26-la-0.1-lr0.001-temp0.67-noema/results.txt', 'r') as f:
+    with open('/aul/homes/sgao014/Projects/AI4Science/ML-sorrogate/logs/cifar10/bz200-N7194360-wd0.0005-regTrue-31-18-18-la-0.1-lr0.001-temp0.67-noema/results.txt', 'r') as f:
         lines = f.readlines()
         pruned_ratios = lines[0].split('[')[1].split(']')[0].split(',')
         pruned_ratios = [float(x.strip()) for x in pruned_ratios]
@@ -210,10 +210,10 @@ def inferance(roots, args):
 
     # plot the results in a plot
     # flops = np.arange(0, len(flops))
-    plot_results(flops, average_times, 'Time', title='Time cost', savefig=f'{root}/time-{args.dataset}.png')
-    plot_results(flops, average_test_losses, 'Loss', title='Test loss', savefig=f'{root}/loss-{args.dataset}.png')
-    plot_results(flops, [average_relative_errors, pruned_ratios], ['Relative Error', 'pruned_ratios'],
-                 title='Relative error', savefig=f'{root}/relative_error-{args.dataset}.png', td=True)
+    plot_results(pruned_ratios, average_times, 'Time', title='Time cost', savefig=f'{root}/time-{args.dataset}.png')
+    plot_results(pruned_ratios, average_test_losses, 'Loss', title='Test loss', savefig=f'{root}/loss-{args.dataset}.png')
+    plot_results(pruned_ratios, average_relative_errors, 'Relative Error',
+                 title='Relative error', savefig=f'{root}/relative_error-{args.dataset}.png')
 
 
 def read_draw(roots):
@@ -229,6 +229,14 @@ def read_draw(roots):
 
 
 def draw_compare_acc(root1, root2):
+    _, _, _, average_relative_errors1, pruned_ratios1 = read_results(root1[0])
+    _, _, _, average_relative_errors2, pruned_ratios2 = read_results(root2[0])
+    plot_results([pruned_ratios1, pruned_ratios2], [average_relative_errors1, average_relative_errors2],
+                 y_label=['prune_weights', 'prune_neuron'], title='Compare Acc',
+                 savefig=f'{root2[0]}/Compare Acc.png', td=True)
+
+
+def draw_compare_acc1(root1, root2):
     _, _, _, average_relative_errors1, pruned_ratios1 = read_results(root1[0])
     _, _, _, average_relative_errors2, pruned_ratios2 = read_results(root2[0])
     pruned_ratios3, quality = read_ML_results()
@@ -263,7 +271,7 @@ if __name__ == "__main__":
     # root = './saves/fc1/puremd'
     # root = './saves/fluidanimation/01-12-16'
     # root = './saves/CFD-fs/01-09-18'
-    root = './saves/cifar10/01-30-17-prune-neuron'
+    root = './saves/cifar10/01-31-18-prune-weights'
     roots = [os.path.join(root, x) for x in os.listdir(root) if 'model_lt' in x]
     # sort the roots
     roots.sort(key=lambda x: int(x.split('_')[0].split('/')[-1]))
@@ -271,4 +279,4 @@ if __name__ == "__main__":
     # inferance(roots, args)
     # read_draw([root])
     # draw_compare_acc(['./saves/cifar10/01-30-15'], ['./saves/cifar10/01-30-17-prune-neuron'])
-    draw_compare_acc(['./saves/mnist/01-29-10'], ['./saves/mnist/01-29-13'])
+    draw_compare_acc1(['./saves/cifar10/01-31-18-prune-weights'], ['./saves/cifar10/01-31-18-prune-neuron'])

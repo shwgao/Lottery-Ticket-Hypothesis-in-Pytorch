@@ -172,8 +172,8 @@ def main(args, ITE=0):
 # Function for Training
 def train(model, train_loader, optimizer, criterion):
     EPS = 1e-28
+    losses = utils.AverageMeter()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    total_loss = 0
     model.train()
     for batch_idx, (datas) in enumerate(train_loader):
         if isinstance(datas, dict):
@@ -196,22 +196,22 @@ def train(model, train_loader, optimizer, criterion):
                 grad_tensor = np.where(tensor < EPS, 0, grad_tensor)
                 p.grad.data = torch.from_numpy(grad_tensor).to(device)
         optimizer.step()
-        total_loss += train_loss.item() / len(train_loader)
+
+        losses.update(train_loss.item())
         if debugging:
             print(f'train loss: {train_loss.item()}')
-    mean_loss = total_loss
 
     if debugging:
-        print(f'mean: train loss: {mean_loss}, len: {len(train_loader)}')
-    return mean_loss
+        print(f'mean: train loss: {losses.avg}, len: {len(train_loader)}')
+    return losses.avg
 
 
 # Function for Testing
 def test(model, test_loader, criterion):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
-    test_losses = 0
-    r2 = []
+    test_losses = utils.AverageMeter()
+    r_error = utils.AverageMeter()
 
     with torch.no_grad():
         for i, (datas) in enumerate(test_loader):
@@ -226,36 +226,18 @@ def test(model, test_loader, criterion):
             test_loss = criterion(output, target).item()
             if isinstance(criterion, nn.CrossEntropyLoss):
                 r2_l = test_loss
-                r2 += [utils.accuracy(output, target, topk=(1,))[0].item()]
+                r2 = utils.accuracy(output.data, target, topk=(1,))[0].item()
+                r_error.update(r2, data.size(0))
             else:
                 r2_l = r2_loss(output, target).item()
                 r2 = r2_score(target.cpu(), output.cpu(), multioutput='raw_values')
-            test_losses += test_loss
-            if debugging:
-                print(f'test loss: {test_loss}, Quality loss: {r2_l}, Quality matrix: {r2}.(Quality means r2 or acc ')
-        test_losses /= len(test_loader)
-        if debugging:
-            print(f'mean: test loss: {test_losses}, r2 score: {r2}, len: {len(test_loader)}')
-    return test_losses, r2_l, r2
 
+            test_losses.update(test_loss)
 
-def test1(model, test_loader, criterion):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.eval()
-    test_loss = 0
-    output = None
-    target = None
-    with torch.no_grad():
-        for data, target in test_loader:
-            data, target = data.to(device), target.to(device)
-            output = model(data)
-            test_loss += criterion(output, target).item()
-        test_loss /= len(test_loader.dataset)
-        if output is not None and target is not None:
-            relative_error = 100. * torch.mean(torch.abs(output - target) / torch.abs(target + 1e-8))
-        else:
-            relative_error = torch.tensor(0)  # or any other default value
-    return test_loss, relative_error
+        if isinstance(criterion, nn.CrossEntropyLoss):
+            r2 = r_error.avg
+
+    return test_losses.avg, r2_l, r2
 
 
 # Prune by Percentile module
@@ -454,4 +436,3 @@ if __name__ == "__main__":
     # Looping Entire process
     # for i in range(0, 5):
     main(args, ITE=1)
-

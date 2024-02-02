@@ -2,12 +2,35 @@
 import numpy as np
 import torch
 import os
+from load_dataset import cifar10, mnist
 import seaborn as sns
 import matplotlib.pyplot as plt
 import copy
 
 from load_dataset import load_data
 global fc1, LeNet5, AlexNet, vgg, resnet, densenet, dimenet
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+    def __init__(self):
+        self.count = None
+        self.avg = None
+        self.sum = None
+        self.val = None
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
 
 
 #ANCHOR Print table of zeros and non-zeros count
@@ -102,13 +125,15 @@ def get_essentials(args):
     # Data Loader
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
     if args.dataset == "mnist":
-        traindataset = datasets.MNIST('../data', train=True, download=True, transform=transform)
-        testdataset = datasets.MNIST('../data', train=False, transform=transform)
+        # traindataset = datasets.MNIST('../data', train=True, download=True, transform=transform)
+        # testdataset = datasets.MNIST('../data', train=False, transform=transform)
+        train_loader, test_loader, num_classes = mnist(batch_size=args.batch_size)
         from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
 
     elif args.dataset == "cifar10":
-        traindataset = datasets.CIFAR10('../data', train=True, download=True, transform=transform)
-        testdataset = datasets.CIFAR10('../data', train=False, transform=transform)
+        # traindataset = datasets.CIFAR10('../data', train=True, download=True, transform=transform)
+        # testdataset = datasets.CIFAR10('../data', train=False, transform=transform)
+        train_loader, test_loader, num_classes = cifar10(batch_size=args.batch_size)
         from archs.cifar10 import AlexNet, LeNet5, fc1, vgg, resnet, densenet
 
     elif args.dataset == "fashionmnist":
@@ -136,22 +161,22 @@ def get_essentials(args):
 
     elif args.dataset == "cosmoflow":
         traindataset, testdataset = load_data(args)
+        train_loader = torch.utils.data.DataLoader(traindataset, batch_size=args.batch_size, shuffle=True,
+                                                   num_workers=0, drop_last=False)
+        test_loader = torch.utils.data.DataLoader(testdataset, batch_size=args.batch_size, shuffle=False,
+                                                  num_workers=0, drop_last=True)
         from archs.cosmoflow import fc1
 
     elif args.dataset == "dimenet":
         traindataset, testdataset = load_data(args)
+        train_loader = torch.utils.data.DataLoader(traindataset, batch_size=1, shuffle=True,
+                                                   num_workers=0, drop_last=False)
+        test_loader = torch.utils.data.DataLoader(testdataset, batch_size=1, shuffle=False,
+                                                  num_workers=0, drop_last=True)
 
     else:
         print("\nWrong Dataset choice \n")
         exit()
-
-    train_loader = torch.utils.data.DataLoader(traindataset, batch_size=args.batch_size, shuffle=True, num_workers=0,
-                                               drop_last=False)
-    # train_loader = cycle(train_loader)
-    # test_loader = torch.utils.data.DataLoader(testdataset, batch_size=args.batch_size, shuffle=False, num_workers=0,
-    #                                           drop_last=True)
-    test_loader = torch.utils.data.DataLoader(testdataset, batch_size=len(testdataset), shuffle=False, num_workers=0,
-                                              drop_last=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if args.arch_type == "fc1":
