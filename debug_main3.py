@@ -98,7 +98,7 @@ def main(args, ITE=0):
     all_r2_loss = np.zeros(args.end_iter, float)
 
     for _ite in range(args.start_iter, ITERATION):
-        args.lr = 1e-3 * np.power(0.8, _ite)
+        args.lr = 1e-3 * np.power(0.9, _ite)
 
         if not _ite == 0:
             args.end_iter = 30
@@ -410,11 +410,11 @@ if __name__ == "__main__":
     parser.add_argument("--valid_freq", default=1, type=int)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--prune_type", default="lt", type=str, help="lt | reinit")
-    parser.add_argument("--gpu", default="0", type=str)
-    parser.add_argument("--dataset", default="mnist", type=str,
+    parser.add_argument("--gpu", default="1", type=str)
+    parser.add_argument("--dataset", default="cifar10", type=str,
                         help="mnist | cifar10 | fashionmnist | cifar100 | "
                              "CFD | fluidanimation | puremd | cosmoflow | dimenet")
-    parser.add_argument("--arch_type", default="fc1", type=str,
+    parser.add_argument("--arch_type", default="lenet5", type=str,
                         help="fc1 | lenet5 | alexnet | vgg16 | resnet18 | densenet121")
     parser.add_argument("--prune_percent", default=10, type=int, help="Pruning percent")
     parser.add_argument("--prune_iterations", default=20, type=int, help="Pruning iterations count")

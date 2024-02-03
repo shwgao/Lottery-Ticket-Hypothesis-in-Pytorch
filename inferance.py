@@ -11,6 +11,7 @@ from numpy import mean
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
+import utils
 from load_dataset import load_data
 from utils import print_nonzeros
 
@@ -32,46 +33,46 @@ def l1_loss(output, target):
     return torch.mean(torch.abs(output - target))
 
 
-def load_datas(args):
-    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-    if args.dataset == "mnist":
-        traindataset = datasets.MNIST('../data', train=True, download=True, transform=transform)
-        testdataset = datasets.MNIST('../data', train=False, transform=transform)
-
-    elif args.dataset == "cifar10":
-        traindataset = datasets.CIFAR10('../data', train=True, download=True, transform=transform)
-        testdataset = datasets.CIFAR10('../data', train=False, transform=transform)
-
-    elif "CFD" in args.dataset:
-        args.dataset = 'CFD'
-        traindataset, testdataset = load_data(args)
-        from archs.CFD import fc1
-
-    elif args.dataset == "fluidanimation":
-        traindataset, testdataset = load_data(args)
-        from archs.fluidanimation import fc1
-
-    elif args.dataset == "puremd":
-        traindataset, testdataset = load_data(args)
-        from archs.puremd import fc1
-
-    elif args.dataset == "cosmoflow":
-        traindataset, testdataset = load_data(args)
-        from archs.cosmoflow import fc1
-
-    elif args.dataset == "dimenet":
-        traindataset, testdataset = load_data(args)
-
-    else:
-        print("\nWrong Dataset choice \n")
-        exit()
-
-    train_loader = torch.utils.data.DataLoader(traindataset, batch_size=args.batch_size, shuffle=True, num_workers=0,
-                                               drop_last=False)
-    # train_loader = cycle(train_loader)
-    test_loader = torch.utils.data.DataLoader(testdataset, batch_size=len(testdataset), shuffle=False, num_workers=0,
-                                              drop_last=True)
-    return train_loader, test_loader
+# def load_datas(args):
+#     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
+#     if args.dataset == "mnist":
+#         traindataset = datasets.MNIST('../data', train=True, download=True, transform=transform)
+#         testdataset = datasets.MNIST('../data', train=False, transform=transform)
+#
+#     elif args.dataset == "cifar10":
+#         traindataset = datasets.CIFAR10('../data', train=True, download=True, transform=transform)
+#         testdataset = datasets.CIFAR10('../data', train=False, transform=transform)
+#
+#     elif "CFD" in args.dataset:
+#         args.dataset = 'CFD'
+#         traindataset, testdataset = load_data(args)
+#         from archs.CFD import fc1
+#
+#     elif args.dataset == "fluidanimation":
+#         traindataset, testdataset = load_data(args)
+#         from archs.fluidanimation import fc1
+#
+#     elif args.dataset == "puremd":
+#         traindataset, testdataset = load_data(args)
+#         from archs.puremd import fc1
+#
+#     elif args.dataset == "cosmoflow":
+#         traindataset, testdataset = load_data(args)
+#         from archs.cosmoflow import fc1
+#
+#     elif args.dataset == "dimenet":
+#         traindataset, testdataset = load_data(args)
+#
+#     else:
+#         print("\nWrong Dataset choice \n")
+#         exit()
+#
+#     train_loader = torch.utils.data.DataLoader(traindataset, batch_size=args.batch_size, shuffle=True, num_workers=0,
+#                                                drop_last=False)
+#     # train_loader = cycle(train_loader)
+#     test_loader = torch.utils.data.DataLoader(testdataset, batch_size=len(testdataset), shuffle=False, num_workers=0,
+#                                               drop_last=True)
+#     return train_loader, test_loader
 
 
 def cal_performance(model_path, input_shape, classfication=False):
@@ -96,8 +97,10 @@ def cal_performance(model_path, input_shape, classfication=False):
     test_losses = 0
     relative_errors = 0
     model = model.to(device)
-    train_loader, test_loader = load_datas(args)
+    train_loader, test_loader, _ = utils.get_essentials(args)
     correct = 0
+    r_error = utils.AverageMeter()
+    test_losses = utils.AverageMeter()
     with torch.no_grad():
         for i, (datas) in enumerate(test_loader):
             if isinstance(datas, dict):
@@ -114,23 +117,26 @@ def cal_performance(model_path, input_shape, classfication=False):
                 test_loss = F.cross_entropy(output, target).item()
                 pred = output.data.max(1, keepdim=True)[1]
                 correct += pred.eq(target.data.view_as(pred)).cpu().sum()
+                r2 = utils.accuracy(output.data, target, topk=(1,))[0].item()
+                r_error.update(r2, data.size(0))
             else:
                 test_loss = r2_loss(output, target).item()
                 relative_error = torch.mean(torch.abs(output - target) / torch.abs(target + 1e-8))
                 relative_errors += relative_error.item()
-            test_losses += test_loss 
+            test_losses.update(test_loss)
 
     average_time = mean(times)
-    average_test_loss = test_losses / len(test_loader)
+    average_test_loss = test_losses.avg
     average_relative_error = relative_errors / len(test_loader)
     if classfication:
         accuracy = 100. * correct / len(test_loader.dataset)
         average_relative_error = accuracy.item()
 
+    print(average_relative_error, r_error.avg)
     print("Time cost: %s" % average_time)
     print("Test loss: %s" % average_test_loss)
     print("Relative error: %s" % average_relative_error)
-    return flops, average_time, average_test_loss, average_relative_error, 1-ratio/100
+    return flops, average_time, average_test_loss, r_error.avg, 1-ratio/100
 
 
 def plot_results(x, y, y_label, x_label='Pruning Level', title=None, savefig=None, td=False):
@@ -192,7 +198,7 @@ def inferance(roots, args):
         print(path)
         # flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 4, 128, 128, 128))
         # flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 15))
-        flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 3, 32, 32), classfication=True)
+        flops_, average_time, average_test_loss, average_relative_error, pruned_ratio = cal_performance(path, (1, 28, 28), classfication=True)
 
         flops.append(flops_)
         average_times.append(average_time)
@@ -232,7 +238,7 @@ def draw_compare_acc(root1, root2):
     _, _, _, average_relative_errors1, pruned_ratios1 = read_results(root1[0])
     _, _, _, average_relative_errors2, pruned_ratios2 = read_results(root2[0])
     plot_results([pruned_ratios1, pruned_ratios2], [average_relative_errors1, average_relative_errors2],
-                 y_label=['prune_weights', 'prune_neuron'], title='Compare Acc',
+                 y_label=['prune_neuron', 'gradually_prune_neuron'], title='Compare Acc',
                  savefig=f'{root2[0]}/Compare Acc.png', td=True)
 
 
@@ -271,12 +277,13 @@ if __name__ == "__main__":
     # root = './saves/fc1/puremd'
     # root = './saves/fluidanimation/01-12-16'
     # root = './saves/CFD-fs/01-09-18'
-    root = './saves/cifar10/01-31-18-prune-weights'
+    # root = './saves/mnist/02-01-19-gradually-prune-neuron'
+    root = './saves/cifar10/02-02-10-prune-neuron'
     roots = [os.path.join(root, x) for x in os.listdir(root) if 'model_lt' in x]
     # sort the roots
     roots.sort(key=lambda x: int(x.split('_')[0].split('/')[-1]))
 
-    # inferance(roots, args)
+    inferance(roots, args)
     # read_draw([root])
-    # draw_compare_acc(['./saves/cifar10/01-30-15'], ['./saves/cifar10/01-30-17-prune-neuron'])
-    draw_compare_acc1(['./saves/cifar10/01-31-18-prune-weights'], ['./saves/cifar10/01-31-18-prune-neuron'])
+    # draw_compare_acc(['./saves/mnist/01-29-13'], ['./saves/mnist/02-02-09-gradually-prune-neuron'])
+    # draw_compare_acc1(['./saves/cifar10/01-31-18-prune-weights'], ['./saves/cifar10/01-31-18-prune-neuron'])
